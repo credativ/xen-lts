@@ -90,8 +90,6 @@ void hypercall_page_initialise(struct domain *d, void *);
 /*          shadow paging extension             */
 /************************************************/
 struct shadow_domain {
-    mm_lock_t         lock;  /* shadow domain lock */
-
     unsigned int      opt_flags;    /* runtime tunable optimizations on/off */
     struct page_list_head pinned_shadows;
 
@@ -157,8 +155,6 @@ struct shadow_vcpu {
 /*            hardware assisted paging          */
 /************************************************/
 struct hap_domain {
-    mm_lock_t         lock;
-
     struct page_list_head freelist;
     unsigned int      total_pages;  /* number of pages allocated */
     unsigned int      free_pages;   /* number of pages on freelists */
@@ -169,9 +165,6 @@ struct hap_domain {
 /*       common paging data structure           */
 /************************************************/
 struct log_dirty_domain {
-    /* log-dirty lock */
-    mm_lock_t     lock;
-
     /* log-dirty radix tree to record dirty pages */
     mfn_t          top;
     unsigned int   allocs;
@@ -188,6 +181,9 @@ struct log_dirty_domain {
 };
 
 struct paging_domain {
+    /* paging lock */
+    mm_lock_t lock;
+
     /* flags to control paging operation */
     u32                     mode;
     /* extension for shadow paging support */

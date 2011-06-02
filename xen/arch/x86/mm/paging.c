@@ -121,6 +121,8 @@ void paging_free_log_dirty_bitmap(struct domain *d)
     if ( !mfn_valid(d->arch.paging.log_dirty.top) )
         return;
 
+    paging_lock(d);
+
     l4 = map_domain_page(mfn_x(d->arch.paging.log_dirty.top));
 
     for ( i4 = 0; i4 < LOGDIRTY_NODE_ENTRIES; i4++ )
@@ -155,6 +157,8 @@ void paging_free_log_dirty_bitmap(struct domain *d)
     d->arch.paging.log_dirty.top = _mfn(INVALID_MFN);
     ASSERT(d->arch.paging.log_dirty.allocs == 0);
     d->arch.paging.log_dirty.failed_allocs = 0;
+
+    paging_unlock(d);
 }
 
 int paging_log_dirty_enable(struct domain *d)
@@ -178,10 +182,10 @@ int paging_log_dirty_disable(struct domain *d)
     domain_pause(d);
     /* Safe because the domain is paused. */
     ret = d->arch.paging.log_dirty.disable_log_dirty(d);
-    log_dirty_lock(d);
+    paging_lock(d);
     if ( !paging_mode_log_dirty(d) )
         paging_free_log_dirty_bitmap(d);
-    log_dirty_unlock(d);
+    paging_unlock(d);
     domain_unpause(d);
 
     return ret;
@@ -228,7 +232,8 @@ void paging_mark_dirty(struct domain *d, unsigned long guest_mfn)
     new_mfn = _mfn(INVALID_MFN);
 
 again:
-    log_dirty_lock(d);
+    /* Recursive: this is called from inside the shadow code */
+    paging_lock_recursive(d);
 
     l4 = paging_map_log_dirty_bitmap(d);
     if ( unlikely(!l4) )
@@ -289,13 +294,13 @@ again:
         d->arch.paging.log_dirty.dirty_count++;
     }
 
-    log_dirty_unlock(d);
+    paging_unlock(d);
     if ( mfn_valid(new_mfn) )
         paging_free_log_dirty_page(d, new_mfn);
     return;
 
 oom:
-    log_dirty_unlock(d);
+    paging_unlock(d);
     new_mfn = paging_new_log_dirty_page(d);
     if ( !mfn_valid(new_mfn) )
         /* we've already recorded the failed allocation */
@@ -312,7 +317,8 @@ int paging_mfn_is_dirty(struct domain *d, mfn_t gmfn)
     unsigned long *l1;
     int rv = 0;
 
-    log_dirty_lock(d);
+    /* Recursive: this is called from inside the shadow code */
+    paging_lock_recursive(d);
     ASSERT(paging_mode_log_dirty(d));
 
     /* We /really/ mean PFN here, even for non-translated guests. */
@@ -348,7 +354,7 @@ int paging_mfn_is_dirty(struct domain *d, mfn_t gmfn)
     unmap_domain_page(l1);
 
 out:
-    log_dirty_unlock(d);
+    paging_unlock(d);
     return rv;
 }
 
@@ -364,7 +370,7 @@ int paging_log_dirty_op(struct domain *d, struct xen_domctl_shadow_op *sc)
     int i4, i3, i2;
 
     domain_pause(d);
-    log_dirty_lock(d);
+    paging_lock(d);
 
     clean = (sc->op == XEN_DOMCTL_SHADOW_OP_CLEAN);
 
@@ -445,7 +451,7 @@ int paging_log_dirty_op(struct domain *d, struct xen_domctl_shadow_op *sc)
     if ( pages < sc->pages )
         sc->pages = pages;
 
-    log_dirty_unlock(d);
+    paging_unlock(d);
 
     if ( clean )
     {
@@ -457,7 +463,7 @@ int paging_log_dirty_op(struct domain *d, struct xen_domctl_shadow_op *sc)
     return rv;
 
  out:
-    log_dirty_unlock(d);
+    paging_unlock(d);
     domain_unpause(d);
     return rv;
 }
@@ -475,7 +481,7 @@ int paging_log_dirty_range(struct domain *d,
     int i2, i3, i4;
 
     d->arch.paging.log_dirty.clean_dirty_bitmap(d);
-    log_dirty_lock(d);
+    paging_lock(d);
 
     PAGING_DEBUG(LOGDIRTY, "log-dirty-range: dom %u faults=%u dirty=%u\n",
                  d->domain_id,
@@ -606,12 +612,12 @@ int paging_log_dirty_range(struct domain *d,
     if ( l4 )
         unmap_domain_page(l4);
 
-    log_dirty_unlock(d);
+    paging_unlock(d);
 
     return rv;
 
  out:
-    log_dirty_unlock(d);
+    paging_unlock(d);
     return rv;
 }
 
@@ -627,9 +633,6 @@ void paging_log_dirty_init(struct domain *d,
                            int    (*disable_log_dirty)(struct domain *d),
                            void   (*clean_dirty_bitmap)(struct domain *d))
 {
-    /* We initialize log dirty lock first */
-    mm_lock_init(&d->arch.paging.log_dirty.lock);
-
     d->arch.paging.log_dirty.enable_log_dirty = enable_log_dirty;
     d->arch.paging.log_dirty.disable_log_dirty = disable_log_dirty;
     d->arch.paging.log_dirty.clean_dirty_bitmap = clean_dirty_bitmap;
@@ -638,9 +641,9 @@ void paging_log_dirty_init(struct domain *d,
 /* This function fress log dirty bitmap resources. */
 static void paging_log_dirty_teardown(struct domain*d)
 {
-    log_dirty_lock(d);
+    paging_lock(d);
     paging_free_log_dirty_bitmap(d);
-    log_dirty_unlock(d);
+    paging_unlock(d);
 }
 /************************************************/
 /*           CODE FOR PAGING SUPPORT            */
@@ -657,6 +660,8 @@ int paging_domain_init(struct domain *d, unsigned int domcr_flags)
      * log-dirty init code as that can be called more than once and we
      * don't want to leak any active log-dirty bitmaps */
     d->arch.paging.log_dirty.top = _mfn(INVALID_MFN);
+
+    mm_lock_init(&d->arch.paging.lock);
 
     /* The order of the *_init calls below is important, as the later
      * ones may rewrite some common fields.  Shadow pagetables are the

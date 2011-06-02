@@ -367,7 +367,6 @@ static inline mfn_t gfn_to_mfn_unshare(struct p2m_domain *p2m,
     return mfn;
 }
 
-
 /* Compatibility function exporting the old untyped interface */
 static inline unsigned long gmfn_to_mfn(struct domain *d, unsigned long gpfn)
 {
