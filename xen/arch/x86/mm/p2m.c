@@ -39,6 +39,8 @@
 #define P2M_AUDIT     0
 #define P2M_DEBUGGING 0
 
+#include "mm-locks.h"
+
 /* turn on/off 1GB host page table support for hap, default on */
 bool_t __read_mostly opt_hap_1gb = 1;
 boolean_param("hap_1gb", opt_hap_1gb);
@@ -649,7 +651,7 @@ p2m_pod_empty_cache(struct domain *d)
 
     /* After this barrier no new PoD activities can happen. */
     BUG_ON(!d->is_dying);
-    spin_barrier(&p2m->lock);
+    spin_barrier(&p2m->lock.lock);
 
     spin_lock(&d->page_alloc_lock);
 
@@ -1871,7 +1873,7 @@ out:
 static void p2m_initialise(struct domain *d, struct p2m_domain *p2m)
 {
     memset(p2m, 0, sizeof(*p2m));
-    p2m_lock_init(p2m);
+    mm_lock_init(&p2m->lock);
     INIT_PAGE_LIST_HEAD(&p2m->pages);
     INIT_PAGE_LIST_HEAD(&p2m->pod.super);
     INIT_PAGE_LIST_HEAD(&p2m->pod.single);

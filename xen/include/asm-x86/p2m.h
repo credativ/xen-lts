@@ -202,9 +202,7 @@ typedef enum {
 
 struct p2m_domain {
     /* Lock that protects updates to the p2m */
-    spinlock_t         lock;
-    int                locker;   /* processor which holds the lock */
-    const char        *locker_function; /* Func that took it */
+    mm_lock_t          lock;
 
     /* Shadow translated domain: p2m mapping */
     pagetable_t        phys_table;
@@ -275,47 +273,6 @@ struct p2m_domain {
 #define p2m_get_hostp2m(d)      ((d)->arch.p2m)
 
 #define p2m_get_pagetable(p2m)  ((p2m)->phys_table)
-
-/*
- * The P2M lock.  This protects all updates to the p2m table.
- * Updates are expected to be safe against concurrent reads,
- * which do *not* require the lock.
- *
- * Locking discipline: always acquire this lock before the shadow or HAP one
- */
-
-#define p2m_lock_init(_p2m)                     \
-    do {                                        \
-        spin_lock_init(&(_p2m)->lock);          \
-        (_p2m)->locker = -1;                    \
-        (_p2m)->locker_function = "nobody";     \
-    } while (0)
-
-#define p2m_lock(_p2m)                                          \
-    do {                                                        \
-        if ( unlikely((_p2m)->locker == current->processor) )   \
-        {                                                       \
-            printk("Error: p2m lock held by %s\n",              \
-                   (_p2m)->locker_function);                    \
-            BUG();                                              \
-        }                                                       \
-        spin_lock(&(_p2m)->lock);                               \
-        ASSERT((_p2m)->locker == -1);                           \
-        (_p2m)->locker = current->processor;                    \
-        (_p2m)->locker_function = __func__;                     \
-    } while (0)
-
-#define p2m_unlock(_p2m)                                \
-    do {                                                \
-        ASSERT((_p2m)->locker == current->processor);   \
-        (_p2m)->locker = -1;                            \
-        (_p2m)->locker_function = "nobody";             \
-        spin_unlock(&(_p2m)->lock);                     \
-    } while (0)
-
-#define p2m_locked_by_me(_p2m)                            \
-    (current->processor == (_p2m)->locker)
-
 
 /* Extract the type from the PTE flags that store it */
 static inline p2m_type_t p2m_flags_to_type(unsigned long flags)
