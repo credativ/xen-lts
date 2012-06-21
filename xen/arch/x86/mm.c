@@ -1856,6 +1856,7 @@ static int mod_l1_entry(l1_pgentry_t *pl1e, l1_pgentry_t nl1e,
             break;
         case 1:
             l1e_remove_flags(nl1e, _PAGE_RW);
+            rc = 0;
             break;
         }
         
