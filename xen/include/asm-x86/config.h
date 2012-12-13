@@ -13,6 +13,8 @@
 # define CONFIG_PAGING_LEVELS 3
 #endif
 
+#define BITS_PER_BYTE 8
+
 #define CONFIG_X86 1
 #define CONFIG_X86_HT 1
 #define CONFIG_PAGING_ASSISTANCE 1

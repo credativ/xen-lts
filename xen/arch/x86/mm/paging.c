@@ -468,157 +468,41 @@ int paging_log_dirty_op(struct domain *d, struct xen_domctl_shadow_op *sc)
     return rv;
 }
 
-int paging_log_dirty_range(struct domain *d,
-                            unsigned long begin_pfn,
-                            unsigned long nr,
-                            XEN_GUEST_HANDLE_64(uint8) dirty_bitmap)
+void paging_log_dirty_range(struct domain *d,
+                           unsigned long begin_pfn,
+                           unsigned long nr,
+                           uint8_t *dirty_bitmap)
 {
-    int rv = 0;
-    unsigned long pages = 0;
-    mfn_t *l4, *l3, *l2;
-    unsigned long *l1;
-    int b1, b2, b3, b4;
-    int i2, i3, i4;
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
+    int i;
+    unsigned long pfn;
 
-    d->arch.paging.log_dirty.clean_dirty_bitmap(d);
-    paging_lock(d);
-
-    PAGING_DEBUG(LOGDIRTY, "log-dirty-range: dom %u faults=%u dirty=%u\n",
-                 d->domain_id,
-                 d->arch.paging.log_dirty.fault_count,
-                 d->arch.paging.log_dirty.dirty_count);
-
-    if ( unlikely(d->arch.paging.log_dirty.failed_allocs) ) {
-        printk("%s: %d failed page allocs while logging dirty pages\n",
-               __FUNCTION__, d->arch.paging.log_dirty.failed_allocs);
-        rv = -ENOMEM;
-        goto out;
-    }
-
-    if ( !d->arch.paging.log_dirty.fault_count &&
-         !d->arch.paging.log_dirty.dirty_count ) {
-        static uint8_t zeroes[PAGE_SIZE];
-        int off, size;
-
-        size = ((nr + BITS_PER_LONG - 1) / BITS_PER_LONG) * sizeof (long);
-        rv = 0;
-        off = 0;
-        while ( !rv && off < size )
-        {
-            int todo = min(size - off, (int) PAGE_SIZE);
-            if ( copy_to_guest_offset(dirty_bitmap, off, zeroes, todo) )
-                rv = -EFAULT;
-            off += todo;
-        }
-        goto out;
-    }
-    d->arch.paging.log_dirty.fault_count = 0;
-    d->arch.paging.log_dirty.dirty_count = 0;
-
-    b1 = L1_LOGDIRTY_IDX(begin_pfn);
-    b2 = L2_LOGDIRTY_IDX(begin_pfn);
-    b3 = L3_LOGDIRTY_IDX(begin_pfn);
-    b4 = L4_LOGDIRTY_IDX(begin_pfn);
-    l4 = paging_map_log_dirty_bitmap(d);
-
-    for ( i4 = b4;
-          (pages < nr) && (i4 < LOGDIRTY_NODE_ENTRIES);
-          i4++ )
+    /*
+     * Set l1e entries of P2M table to be read-only.
+     *
+     * On first write, it page faults, its entry is changed to read-write,
+     * and on retry the write succeeds.
+     *
+     * We populate dirty_bitmap by looking for entries that have been
+     * switched to read-write.
+     */
+    /* Cannot do p2m_lock because that is still a spinlock and also tries
+     * to lock p2m_lock inside p2m_change_type. Hope that domain being
+     * paused is enough...
+    p2m_lock(p2m);
+     */
+    for ( i = 0, pfn = begin_pfn; pfn < begin_pfn + nr; i++, pfn++ )
     {
-        l3 = (l4 && mfn_valid(l4[i4])) ? map_domain_page(mfn_x(l4[i4])) : NULL;
-        for ( i3 = b3;
-              (pages < nr) && (i3 < LOGDIRTY_NODE_ENTRIES);
-              i3++ )
-        {
-            l2 = ((l3 && mfn_valid(l3[i3])) ?
-                  map_domain_page(mfn_x(l3[i3])) : NULL);
-            for ( i2 = b2;
-                  (pages < nr) && (i2 < LOGDIRTY_NODE_ENTRIES);
-                  i2++ )
-            {
-                static unsigned long zeroes[PAGE_SIZE/BYTES_PER_LONG];
-                unsigned int bytes = PAGE_SIZE;
-                uint8_t *s;
-                l1 = ((l2 && mfn_valid(l2[i2])) ?
-                      map_domain_page(mfn_x(l2[i2])) : zeroes);
+        p2m_type_t pt;
 
-                s = ((uint8_t*)l1) + (b1 >> 3);
-                bytes -= b1 >> 3;
-
-                if ( likely(((nr - pages + 7) >> 3) < bytes) )
-                    bytes = (unsigned int)((nr - pages + 7) >> 3);
-
-                /* begin_pfn is not 32K aligned, hence we have to bit
-                 * shift the bitmap */
-                if ( b1 & 0x7 )
-                {
-                    int i, j;
-                    uint32_t *l = (uint32_t*) s;
-                    int bits = b1 & 0x7;
-                    int bitmask = (1 << bits) - 1;
-                    int size = (bytes + BYTES_PER_LONG - 1) / BYTES_PER_LONG;
-                    unsigned long bitmap[size];
-                    static unsigned long printed = 0;
-
-                    if ( printed != begin_pfn )
-                    {
-                        dprintk(XENLOG_DEBUG, "%s: begin_pfn %lx is not 32K aligned!\n",
-                                __FUNCTION__, begin_pfn);
-                        printed = begin_pfn;
-                    }
-
-                    for ( i = 0; i < size - 1; i++, l++ ) {
-                        bitmap[i] = ((*l) >> bits) |
-                            (((*((uint8_t*)(l + 1))) & bitmask) << (sizeof(*l) * 8 - bits));
-                    }
-                    s = (uint8_t*) l;
-                    size = BYTES_PER_LONG - ((b1 >> 3) & 0x3);
-                    bitmap[i] = 0;
-                    for ( j = 0; j < size; j++, s++ )
-                        bitmap[i] |= (*s) << (j * 8);
-                    bitmap[i] = (bitmap[i] >> bits) | (bitmask << (size * 8 - bits));
-                    if ( copy_to_guest_offset(dirty_bitmap, (pages >> 3),
-                                (uint8_t*) bitmap, bytes) != 0 )
-                    {
-                        rv = -EFAULT;
-                        goto out;
-                    }
-                }
-                else
-                {
-                    if ( copy_to_guest_offset(dirty_bitmap, pages >> 3,
-                                              s, bytes) != 0 )
-                    {
-                        rv = -EFAULT;
-                        goto out;
-                    }
-                }
-
-                if ( l1 != zeroes )
-                    clear_page(l1);
-                pages += bytes << 3;
-                if ( l1 != zeroes )
-                    unmap_domain_page(l1);
-                b1 = b1 & 0x7;
-            }
-            b2 = 0;
-            if ( l2 )
-                unmap_domain_page(l2);
-        }
-        b3 = 0;
-        if ( l3 )
-            unmap_domain_page(l3);
+        pt = p2m_change_type(p2m, pfn, p2m_ram_rw, p2m_ram_logdirty);
+        if ( pt == p2m_ram_rw )
+            dirty_bitmap[i >> 3] |= (1 << (i & 7));
     }
-    if ( l4 )
-        unmap_domain_page(l4);
 
-    paging_unlock(d);
+    /* p2m_unlock(p2m); */
 
-    return rv;
-
- out:
-    paging_unlock(d);
-    return rv;
+    flush_tlb_mask(&d->domain_dirty_cpumask);
 }
 
 /* Note that this function takes three function pointers. Callers must supply
