@@ -2325,6 +2325,8 @@ void hvm_cpuid(unsigned int input, unsigned int *eax, unsigned int *ebx,
 
     switch ( input )
     {
+        unsigned int sub_leaf, _eax, _ebx, _ecx, _edx;
+
     case 0x1:
         /* Fix up VLAPIC details. */
         *ebx &= 0x00FFFFFFu;
@@ -2346,8 +2348,6 @@ void hvm_cpuid(unsigned int input, unsigned int *eax, unsigned int *ebx,
         *edx = v->vcpu_id * 2;
         break;
     case 0xd:
-    {
-        unsigned int sub_leaf, _eax, _ebx, _ecx, _edx;
         /* EBX value of main leaf 0 depends on enabled xsave features */
         if ( count == 0 && v->arch.xcr0 ) 
         {
@@ -2364,13 +2364,30 @@ void hvm_cpuid(unsigned int input, unsigned int *eax, unsigned int *ebx,
             }
         }
         break;
-    }
+
     case 0x80000001:
         /* We expose RDTSCP feature to guest only when
            tsc_mode == TSC_MODE_DEFAULT and host_tsc_is_safe() returns 1 */
         if ( v->domain->arch.tsc_mode != TSC_MODE_DEFAULT ||
              !host_tsc_is_safe() )
             *edx &= ~cpufeat_mask(X86_FEATURE_RDTSCP);
+        break;
+
+    case 0x80000008:
+        count = cpuid_eax(0x80000008);
+        count = (count >> 16) & 0xff ?: count & 0xff;
+        if ( (*eax & 0xff) > count )
+            *eax = (*eax & ~0xff) | count;
+
+        hvm_cpuid(1, &_eax, &_ebx, &_ecx, &_edx);
+        count = _edx & (cpufeat_mask(X86_FEATURE_PAE) |
+                        cpufeat_mask(X86_FEATURE_PSE36)) ? 36 : 32;
+        if ( (*eax & 0xff) < count )
+            *eax = (*eax & ~0xff) | count;
+
+        hvm_cpuid(0x80000001, &_eax, &_ebx, &_ecx, &_edx);
+        *eax = (*eax & ~0xffff00) | (_edx & cpufeat_mask(X86_FEATURE_LM)
+                                     ? 0x3000 : 0x2000);
         break;
     }
 }
