@@ -2731,7 +2731,8 @@ static hvm_hypercall_t *hvm_hypercall32_table[NR_hypercalls] = {
     HYPERCALL(set_timer_op),
     HYPERCALL(hvm_op),
     HYPERCALL(sysctl),
-    HYPERCALL(tmem_op)
+    HYPERCALL(tmem_op),
+    [ __HYPERVISOR_arch_1 ] = (hvm_hypercall_t *)paging_domctl_continuation
 };
 
 #else /* defined(__x86_64__) */
@@ -2806,7 +2807,8 @@ static hvm_hypercall_t *hvm_hypercall64_table[NR_hypercalls] = {
     HYPERCALL(set_timer_op),
     HYPERCALL(hvm_op),
     HYPERCALL(sysctl),
-    HYPERCALL(tmem_op)
+    HYPERCALL(tmem_op),
+    [ __HYPERVISOR_arch_1 ] = (hvm_hypercall_t *)paging_domctl_continuation
 };
 
 #define COMPAT_CALL(x)                                        \
@@ -2823,7 +2825,8 @@ static hvm_hypercall_t *hvm_hypercall32_table[NR_hypercalls] = {
     COMPAT_CALL(set_timer_op),
     HYPERCALL(hvm_op),
     HYPERCALL(sysctl),
-    HYPERCALL(tmem_op)
+    HYPERCALL(tmem_op),
+    [ __HYPERVISOR_arch_1 ] = (hvm_hypercall_t *)paging_domctl_continuation
 };
 
 #endif /* defined(__x86_64__) */

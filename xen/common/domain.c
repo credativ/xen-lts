@@ -477,7 +477,6 @@ int domain_kill(struct domain *d)
         rc = domain_relinquish_resources(d);
         if ( rc != 0 )
         {
-            BUG_ON(rc != -EAGAIN);
             break;
         }
         d->is_dying = DOMDYING_dead;
