@@ -185,7 +185,8 @@ static inline int name(k xen_ ## n *x, k compat_ ## n *c) \
     CHECK_FIELD_COMMON_(k, CHECK_NAME_(k, n ## __ ## f1 ## __ ## f2 ## __ ## \
                                        f3, F2), n, f1.f2.f3)
 
-int hypercall_xlat_continuation(unsigned int *id, unsigned int mask, ...);
+int hypercall_xlat_continuation(unsigned int *id, unsigned int nr,
+                                unsigned int mask, ...);
 
 /* In-place translation functons: */
 struct start_info;
