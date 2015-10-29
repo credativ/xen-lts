@@ -670,6 +670,7 @@ static void complete_domain_destroy(struct rcu_head *head)
     xfree(d->pirq_to_evtchn);
 
     xsm_free_security_domain(d);
+    xfree(d->vcpu);
     free_domain_struct(d);
 
     send_guest_global_virq(dom0, VIRQ_DOM_EXC);
