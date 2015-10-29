@@ -167,7 +167,9 @@ typedef l4_pgentry_t root_pgentry_t;
 #define BASE_DISALLOW_MASK (0xFF800198U & ~_PAGE_NX)
 
 #define L1_DISALLOW_MASK (BASE_DISALLOW_MASK | _PAGE_GNTTAB)
-#define L2_DISALLOW_MASK (BASE_DISALLOW_MASK & ~_PAGE_PSE)
+#define L2_DISALLOW_MASK (unlikely(opt_allow_superpage) \
+                          ? BASE_DISALLOW_MASK & ~_PAGE_PSE \
+                          : BASE_DISALLOW_MASK)
 #define L3_DISALLOW_MASK (BASE_DISALLOW_MASK)
 #define L4_DISALLOW_MASK (BASE_DISALLOW_MASK)
 

@@ -1898,7 +1898,10 @@ static int mod_l2_entry(l2_pgentry_t *pl2e,
         }
 
         /* Fast path for identical mapping and presence. */
-        if ( !l2e_has_changed(ol2e, nl2e, _PAGE_PRESENT) )
+        if ( !l2e_has_changed(ol2e, nl2e,
+                              unlikely(opt_allow_superpage)
+                              ? _PAGE_PSE | _PAGE_RW | _PAGE_PRESENT
+                              : _PAGE_PRESENT) )
         {
             adjust_guest_l2e(nl2e, d);
             rc = UPDATE_ENTRY(l2, pl2e, ol2e, nl2e, pfn, vcpu, preserve_ad);
