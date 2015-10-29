@@ -678,15 +678,13 @@ ret_t do_xenoprof_op(int op, XEN_GUEST_HANDLE(void) arg)
     
     if ( (op < 0) || (op > XENOPROF_last_op) )
     {
-        printk("xenoprof: invalid operation %d for domain %d\n",
-               op, current->domain->domain_id);
+        gdprintk(XENLOG_DEBUG, "invalid operation %d\n", op);
         return -EINVAL;
     }
 
     if ( !NONPRIV_OP(op) && (current->domain != xenoprof_primary_profiler) )
     {
-        printk("xenoprof: dom %d denied privileged operation %d\n",
-               current->domain->domain_id, op);
+        gdprintk(XENLOG_DEBUG, "denied privileged operation %d\n", op);
         return -EPERM;
     }
 
@@ -909,8 +907,7 @@ ret_t do_xenoprof_op(int op, XEN_GUEST_HANDLE(void) arg)
     spin_unlock(&xenoprof_lock);
 
     if ( ret < 0 )
-        printk("xenoprof: operation %d failed for dom %d (status : %d)\n",
-               op, current->domain->domain_id, ret);
+        gdprintk(XENLOG_DEBUG, "operation %d failed: %d\n", op, ret);
 
     return ret;
 }
