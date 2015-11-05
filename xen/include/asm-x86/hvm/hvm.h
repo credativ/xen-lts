@@ -307,7 +307,10 @@ static inline int hvm_do_pmu_interrupt(struct cpu_user_regs *regs)
         (xsave_enabled(_v) ? X86_CR4_OSXSAVE : 0))))
 
 /* These exceptions must always be intercepted. */
-#define HVM_TRAP_MASK ((1U << TRAP_machine_check) | (1U << TRAP_invalid_op))
+#define HVM_TRAP_MASK ((1U << TRAP_debug)           | \
+                       (1U << TRAP_invalid_op)      | \
+                       (1U << TRAP_alignment_check) | \
+                       (1U << TRAP_machine_check))
 
 /*
  * x86 event types. This enumeration is valid for:

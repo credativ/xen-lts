@@ -756,10 +756,11 @@ static void svm_do_resume(struct vcpu *v)
     if ( unlikely(v->arch.hvm_vcpu.debug_state_latch != debug_state) )
     {
         uint32_t intercepts = vmcb_get_exception_intercepts(vmcb);
-        uint32_t mask = (1U << TRAP_debug) | (1U << TRAP_int3);
+
         v->arch.hvm_vcpu.debug_state_latch = debug_state;
         vmcb_set_exception_intercepts(
-            vmcb, debug_state ? (intercepts | mask) : (intercepts & ~mask));
+            vmcb, debug_state ? (intercepts | (1U << TRAP_int3))
+                              : (intercepts & ~(1U << TRAP_int3)));
     }
 
     if ( v->arch.hvm_svm.launch_core != smp_processor_id() )
@@ -1632,8 +1633,9 @@ void svm_vmexit_handler(struct cpu_user_regs *regs)
 
     case VMEXIT_EXCEPTION_DB:
         if ( !v->domain->debugger_attached )
-            goto exit_and_crash;
-        domain_pause_for_debugger();
+            hvm_inject_exception(TRAP_debug, HVM_DELIVER_NO_ERROR_CODE, 0);
+        else
+            domain_pause_for_debugger();
         break;
 
     case VMEXIT_EXCEPTION_BP:
@@ -1680,6 +1682,10 @@ void svm_vmexit_handler(struct cpu_user_regs *regs)
         hvm_inject_exception(TRAP_page_fault, regs->error_code, va);
         break;
     }
+
+    case VMEXIT_EXCEPTION_AC:
+        hvm_inject_exception(TRAP_alignment_check, vmcb->exitinfo1, 0);
+        break;
 
     case VMEXIT_EXCEPTION_UD:
         svm_vmexit_ud_intercept(regs);
