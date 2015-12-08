@@ -487,7 +487,12 @@ static long memory_exchange(XEN_GUEST_HANDLE(xen_memory_exchange_t) arg)
     /* Reassign any input pages we managed to steal. */
     while ( (page = page_list_remove_head(&in_chunk_list)) )
         if ( assign_pages(d, page, 0, MEMF_no_refcount) )
-            BUG();
+        {
+            BUG_ON(!d->is_dying);
+            if ( test_and_clear_bit(_PGC_allocated, &page->count_info) )
+                put_page(page);
+        }
+
  dying:
     rcu_unlock_domain(d);
     /* Free any output pages we managed to allocate. */
