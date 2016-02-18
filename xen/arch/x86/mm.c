@@ -864,9 +864,11 @@ get_page_from_l1e(
             case 0:
                 break;
             case 1:
-                if ( IS_PRIV(l1e_owner) )
+                if ( !IS_PRIV(l1e_owner) )
+                    break;
+                /* fallthrough */
             case -1:
-                    return 0;
+                return 0;
             default:
                 ASSERT(0);
             }
