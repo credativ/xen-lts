@@ -135,6 +135,12 @@ extern unsigned int PAGE_HYPERVISOR_NOCACHE;
                           : BASE_DISALLOW_MASK)
 #define L3_DISALLOW_MASK 0xFFFFF1FEU /* must-be-zero */
 
+/*
+ * Bit 30 of a 32-bit flag mask!  This is not any bit of a real pte,
+ * and is only used for signalling in variables that contain flags.
+ */
+#define _PAGE_INVALID_BIT (1U<<30)
+
 #endif /* __X86_32_PAGE_H__ */
 
 /*
