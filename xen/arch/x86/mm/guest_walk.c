@@ -172,6 +172,11 @@ guest_walk_tables(struct vcpu *v, struct p2m_domain *p2m,
         rc |= _PAGE_PRESENT;
         goto out;
     }
+    if ( gflags & _PAGE_PSE )
+    {
+        rc |= _PAGE_PSE | _PAGE_INVALID_BIT;
+        goto out;
+    }
     rc |= ((gflags & mflags) ^ mflags);
 
     /* Map the l3 table */
