@@ -152,6 +152,8 @@ typedef l4_pgentry_t root_pgentry_t;
 #define get_pte_flags(x) (((int)((x) >> 40) & ~0xFFF) | ((int)(x) & 0xFFF))
 #define put_pte_flags(x) (((intpte_t)((x) & ~0xFFF) << 40) | ((x) & 0xFFF))
 
+#define _PAGE_AVAIL_HIGH (0x7ff << 12)
+
 /* Bit 23 of a 24-bit flag mask. This corresponds to bit 63 of a pte.*/
 #define _PAGE_NX_BIT (1U<<23)
 #define _PAGE_NX     (cpu_has_nx ? _PAGE_NX_BIT : 0U)

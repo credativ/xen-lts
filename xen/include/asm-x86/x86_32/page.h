@@ -116,6 +116,8 @@ extern unsigned int PAGE_HYPERVISOR_NOCACHE;
  *  32-bit flags = (pte[63:44],pte[11:0])
  */
 
+#define _PAGE_AVAIL_HIGH 0
+
 #define _PAGE_NX_BIT (1U<<31)
 #define _PAGE_NX     (cpu_has_nx ? _PAGE_NX_BIT : 0)
 
