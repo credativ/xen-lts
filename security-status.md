@@ -1,5 +1,5 @@
-| Advisory | Status |
-|----------|--------|
+| Advisory | Status 4.1 |
+|----------|------------|
 | XSA-60   | fixed  |
 | XSA-61   | ??     |
 | XSA-62   | fixed  |
