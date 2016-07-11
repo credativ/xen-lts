@@ -30,7 +30,7 @@
 | XSA-87   | fixed  |
 | XSA-88   | fixed  |
 | XSA-89   | fixed  |
-| XSA-90   | not applicable, problem in Linux |
+| XSA-90   | not applicable (Linux) |
 | XSA-91   | not affected |
 | XSA-92   | fixed  |
 | XSA-93   | not affected |
@@ -41,13 +41,13 @@
 | XSA-98   | not affected |
 | XSA-99   | ??     |
 | XSA-100  | fixed  |
-| XSA-101  | ?? |
-| XSA-102  | ?? |
-| XSA-103  | ?? |
+| XSA-101  | not affected (ARM) |
+| XSA-102  | not affected (ARM) |
+| XSA-103  | not affected (ARM) |
 | XSA-104  | ?? |
 | XSA-105  | ?? |
 | XSA-106  | ?? |
-| XSA-107  | ?? |
+| XSA-107  | not affected (4.4+) |
 | XSA-108  | ?? |
 | XSA-109  | ?? |
 | XSA-110  | ?? |
@@ -56,25 +56,25 @@
 | XSA-113  | ?? |
 | XSA-114  | ?? |
 | XSA-115  | ?? |
-| XSA-116  | ?? |
-| XSA-117  | ?? |
-| XSA-118  | ?? |
+| XSA-116  | not affected (4.2+) |
+| XSA-117  | not affected (ARM) |
+| XSA-118  | not affected (4.4+) |
 | XSA-119  | ?? |
-| XSA-120  | ?? |
+| XSA-120  | not applicable (Linux) |
 | XSA-121  | ?? |
 | XSA-122  | ?? |
 | XSA-123  | ?? |
 | XSA-124  | ?? |
 | XSA-125  | ?? |
 | XSA-126  | ?? |
-| XSA-127  | ?? |
+| XSA-127  | not affected (4.3+) |
 | XSA-128  | ?? |
 | XSA-129  | ?? |
 | XSA-130  | ?? |
 | XSA-131  | ?? |
 | XSA-132  | ?? |
 | XSA-133  | ?? |
-| XSA-134  | ?? |
+| XSA-134  | not affected (4.2+) |
 | XSA-135  | ?? |
 | XSA-136  | ?? |
 | XSA-137  | ?? |
@@ -82,12 +82,12 @@
 | XSA-139  | ?? |
 | XSA-140  | ?? |
 | XSA-141  | ?? |
-| XSA-142  | ?? |
+| XSA-142  | not affected |
 | XSA-143  | unused |
 | XSA-144  | unused |
-| XSA-145  | ?? |
-| XSA-146  | ?? |
-| XSA-147  | ?? |
+| XSA-145  | not affected (ARM) |
+| XSA-146  | not affected (ARM) |
+| XSA-147  | not affected (ARM) |
 | XSA-148  | ?? |
 | XSA-149  | ?? |
 | XSA-150  | ?? |
@@ -97,11 +97,11 @@
 | XSA-154  | ?? |
 | XSA-155  | ?? |
 | XSA-156  | ?? |
-| XSA-157  | ?? |
-| XSA-158  | ?? |
+| XSA-157  | not applicable (Linux) |
+| XSA-158  | not affected (ARM) |
 | XSA-159  | ?? |
 | XSA-160  | ?? |
-| XSA-161  | ?? |
+| XSA-161  | withdrawn |
 | XSA-162  | ?? |
 | XSA-163  | ?? |
 | XSA-164  | ?? |
@@ -109,16 +109,16 @@
 | XSA-166  | ?? |
 | XSA-167  | ?? |
 | XSA-168  | ?? |
-| XSA-169  | ?? |
+| XSA-169  | not affected (4.6) |
 | XSA-170  | ?? |
-| XSA-171  | ?? |
+| XSA-171  | not applicable (Linux) |
 | XSA-172  | ?? |
 | XSA-173  | ?? |
-| XSA-174  | ?? |
+| XSA-174  | not applicable (Linux) |
 | XSA-175  | ?? |
 | XSA-176  | ?? |
 | XSA-177  | unused |
 | XSA-178  | ?? |
 | XSA-179  | ?? |
 | XSA-180  | ?? |
-| XSA-181  | ?? |
+| XSA-181  | not affected (ARM) |
