@@ -1138,35 +1138,6 @@ p2m_pod_zero_check(struct p2m_domain *p2m, unsigned long *gfns, int count)
 }
 
 #define POD_SWEEP_LIMIT 1024
-static void
-p2m_pod_emergency_sweep_super(struct p2m_domain *p2m)
-{
-    unsigned long i, start, limit;
-
-    if ( p2m->pod.reclaim_super == 0 )
-    {
-        p2m->pod.reclaim_super = (p2m->pod.max_guest>>9)<<9;
-        p2m->pod.reclaim_super -= SUPERPAGE_PAGES;
-    }
-    
-    start = p2m->pod.reclaim_super;
-    limit = (start > POD_SWEEP_LIMIT) ? (start - POD_SWEEP_LIMIT) : 0;
-
-    for ( i=p2m->pod.reclaim_super ; i > 0 ; i -= SUPERPAGE_PAGES )
-    {
-        p2m_pod_zero_check_superpage(p2m, i);
-        /* Stop if we're past our limit and we have found *something*.
-         *
-         * NB that this is a zero-sum game; we're increasing our cache size
-         * by increasing our 'debt'.  Since we hold the p2m lock,
-         * (entry_count - count) must remain the same. */
-        if ( !page_list_empty(&p2m->pod.super) &&  i < limit )
-            break;
-    }
-
-    p2m->pod.reclaim_super = i ? i - SUPERPAGE_PAGES : 0;
-}
-
 #define POD_SWEEP_STRIDE  16
 static void
 p2m_pod_emergency_sweep(struct p2m_domain *p2m)
@@ -1202,7 +1173,7 @@ p2m_pod_emergency_sweep(struct p2m_domain *p2m)
          * NB that this is a zero-sum game; we're increasing our cache size
          * by re-increasing our 'debt'.  Since we hold the p2m lock,
          * (entry_count - count) must remain the same. */
-        if ( p2m->pod.count > 0 && i < limit )
+        if ( i < limit && (p2m->pod.count > 0 || hypercall_preempt_check()) )
             break;
     }
 
@@ -1211,6 +1182,58 @@ p2m_pod_emergency_sweep(struct p2m_domain *p2m)
 
     p2m->pod.reclaim_single = i ? i - 1 : i;
 
+}
+
+static void pod_eager_reclaim(struct p2m_domain *p2m)
+{
+    struct pod_mrp_list *mrp = &p2m->pod.mrp;
+    unsigned int i = 0;
+
+    /*
+     * Always check one page for reclaimation.
+     *
+     * If the PoD pool is empty, keep checking some space is found, or all
+     * entries have been exhaused.
+     */
+    do
+    {
+        unsigned int idx = (mrp->idx + i++) % ARRAY_SIZE(mrp->list);
+        unsigned long gfn = mrp->list[idx];
+
+        if ( gfn != INVALID_GFN )
+        {
+            if ( gfn & POD_LAST_SUPERPAGE )
+            {
+                gfn &= ~POD_LAST_SUPERPAGE;
+
+                if ( p2m_pod_zero_check_superpage(p2m, gfn) == 0 )
+                {
+                    unsigned int x;
+
+                    for ( x = 0; x < SUPERPAGE_PAGES; ++x, ++gfn )
+                        p2m_pod_zero_check(p2m, &gfn, 1);
+                }
+            }
+            else
+                p2m_pod_zero_check(p2m, &gfn, 1);
+
+            mrp->list[idx] = INVALID_GFN;
+        }
+
+    } while ( (p2m->pod.count == 0) && (i < ARRAY_SIZE(mrp->list)) );
+}
+
+static void pod_eager_record(struct p2m_domain *p2m,
+                             unsigned long gfn, unsigned int order)
+{
+    struct pod_mrp_list *mrp = &p2m->pod.mrp;
+
+    ASSERT(mrp->list[mrp->idx] == INVALID_GFN);
+    ASSERT(gfn != INVALID_GFN);
+
+    mrp->list[mrp->idx++] =
+        gfn | (order == POD_PAGE_ORDER ? POD_LAST_SUPERPAGE : 0);
+    mrp->idx %= ARRAY_SIZE(mrp->list);
 }
 
 int
@@ -1248,22 +1271,12 @@ p2m_pod_demand_populate(struct p2m_domain *p2m, unsigned long gfn,
         return 0;
     }
 
-    /* Once we've ballooned down enough that we can fill the remaining
-     * PoD entries from the cache, don't sweep even if the particular
-     * list we want to use is empty: that can lead to thrashing zero pages 
-     * through the cache for no good reason.  */
-    if ( p2m->pod.entry_count > p2m->pod.count )
-    {
+    pod_eager_reclaim(p2m);
 
-        /* If we're low, start a sweep */
-        if ( order == 9 && page_list_empty(&p2m->pod.super) )
-            p2m_pod_emergency_sweep_super(p2m);
-
-        if ( page_list_empty(&p2m->pod.single) &&
-             ( ( order == 0 )
-               || (order == 9 && page_list_empty(&p2m->pod.super) ) ) )
-            p2m_pod_emergency_sweep(p2m);
-    }
+    /* Only sweep if we're actually out of memory.  Doing anything else
+     * causes unnecessary time and fragmentation of superpages in the p2m. */
+    if ( p2m->pod.count == 0 )
+        p2m_pod_emergency_sweep(p2m);
 
     /* Keep track of the highest gfn demand-populated by a guest fault */
     if ( q == p2m_guest && gfn > p2m->pod.max_guest )
@@ -1271,6 +1284,7 @@ p2m_pod_demand_populate(struct p2m_domain *p2m, unsigned long gfn,
 
     spin_lock(&d->page_alloc_lock);
 
+    /* If the sweep failed, give up. */
     if ( p2m->pod.count == 0 )
         goto out_of_memory;
 
@@ -1297,6 +1311,8 @@ p2m_pod_demand_populate(struct p2m_domain *p2m, unsigned long gfn,
     
     p2m->pod.entry_count -= (1 << order); /* Lock: p2m */
     BUG_ON(p2m->pod.entry_count < 0);
+
+    pod_eager_record(p2m, gfn_aligned, order);
 
     if ( tb_init_done )
     {
@@ -1867,6 +1883,8 @@ out:
 /* Init the datastructures for later use by the p2m code */
 static void p2m_initialise(struct domain *d, struct p2m_domain *p2m)
 {
+    unsigned int i;
+
     memset(p2m, 0, sizeof(*p2m));
     mm_lock_init(&p2m->lock);
     INIT_PAGE_LIST_HEAD(&p2m->pages);
@@ -1880,6 +1898,9 @@ static void p2m_initialise(struct domain *d, struct p2m_domain *p2m)
     p2m->get_entry = p2m_gfn_to_mfn;
     p2m->get_entry_current = p2m_gfn_to_mfn_current;
     p2m->change_entry_type_global = p2m_change_type_global;
+
+    for ( i = 0; i < ARRAY_SIZE(p2m->pod.mrp.list); ++i )
+        p2m->pod.mrp.list[i] = INVALID_GFN;
 
     if ( hap_enabled(d) && (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) )
         ept_p2m_init(d);

@@ -263,9 +263,22 @@ struct p2m_domain {
                          single;       /* Non-super lists                   */
         long             count,        /* # of pages in cache lists         */
                          entry_count;  /* # of pages in p2m marked pod      */
-        unsigned long    reclaim_super; /* Last gpfn of a scan */
         unsigned long    reclaim_single; /* Last gpfn of a scan */
         unsigned long    max_guest;    /* gpfn of max guest demand-populate */
+
+        /*
+         * Tracking of the most recently populated PoD pages, for eager
+         * reclamation.
+         */
+        struct pod_mrp_list {
+#define NR_POD_MRP_ENTRIES 32
+
+/* Encode ORDER_2M superpage in top bit of GFN */
+#define POD_LAST_SUPERPAGE (INVALID_GFN & ~(INVALID_GFN >> 1))
+
+            unsigned long list[NR_POD_MRP_ENTRIES];
+            unsigned int idx;
+        } mrp;
     } pod;
 };
 
