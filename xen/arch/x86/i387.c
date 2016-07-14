@@ -80,13 +80,6 @@ static void xrstor(struct vcpu *v)
                    : "ecx" );
 }
 
-static void load_mxcsr(unsigned long val)
-{
-    val &= 0xffbf;
-    asm volatile ( "ldmxcsr %0" : : "m" (val) );
-}
-
-static void init_fpu(void);
 static void restore_fpu(struct vcpu *v);
 
 void setup_fpu(struct vcpu *v)
@@ -99,6 +92,13 @@ void setup_fpu(struct vcpu *v)
     if ( v->fpu_dirtied )
         return;
 
+    if ( !v->fpu_initialised && v->arch.xsave_area )
+    {
+        memset(&v->arch.xsave_area->xsave_hdr, 0,
+               sizeof(v->arch.xsave_area->xsave_hdr));
+        v->arch.xsave_area->fpu_sse.mxcsr = MXCSR_DEFAULT;
+    }
+
     if ( xsave_enabled(v) )
     {
         /*
@@ -109,24 +109,35 @@ void setup_fpu(struct vcpu *v)
         xrstor(v);
         set_xcr0(v->arch.xcr0);
     }
-    else if ( v->fpu_initialised )
-    {
-        restore_fpu(v);
-    }
     else
     {
-        init_fpu();
+        if ( !v->fpu_initialised )
+        {
+            if ( cpu_has_fxsr )
+            {
+                typeof(v->arch.xsave_area->fpu_sse) *fpu_sse =
+                    (void *)v->arch.guest_context.fpu_ctxt.x;
+
+                memset(fpu_sse, 0, sizeof(*fpu_sse));
+                fpu_sse->fcw = FCW_DEFAULT;
+                fpu_sse->mxcsr = MXCSR_DEFAULT;
+            }
+            else
+            {
+                struct ix87_state *fpu =
+                    (void *)v->arch.guest_context.fpu_ctxt.x;
+
+                memset(fpu, 0, sizeof(*fpu));
+                fpu->env.fcw = FCW_DEFAULT;
+                fpu->env.ftw = 0xffff;
+            }
+        }
+
+        restore_fpu(v);
     }
 
     v->fpu_initialised = 1;
     v->fpu_dirtied = 1;
-}
-
-static void init_fpu(void)
-{
-    asm volatile ( "fninit" );
-    if ( cpu_has_xmm )
-        load_mxcsr(0x1f80);
 }
 
 void save_init_fpu(struct vcpu *v)

@@ -1557,7 +1557,7 @@ long arch_do_domctl(
             }
             offset += sizeof(v->arch.xcr0_accum);
             if ( copy_to_guest_offset(domctl->u.vcpuextstate.buffer,
-                                      offset, v->arch.xsave_area,
+                                      offset, (void *)v->arch.xsave_area,
                                       xsave_cntxt_size) )
             {
                 ret = -EFAULT;

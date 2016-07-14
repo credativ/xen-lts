@@ -38,6 +38,24 @@ bool_t xsave_enabled(const struct vcpu *v);
 #define FCW_DEFAULT               0x037f
 #define MXCSR_DEFAULT             0x1f80
 
+struct ix87_state {
+    struct ix87_env {
+        uint16_t fcw, _res0;
+        uint16_t fsw, _res1;
+        uint16_t ftw, _res2;
+        uint32_t fip;
+        uint16_t fcs;
+        uint16_t fop;
+        uint32_t fdp;
+        uint16_t fds, _res6;
+    } env;
+    struct ix87_reg {
+        uint64_t mantissa;
+        uint16_t exponent:15;
+        uint16_t sign:1;
+    } __attribute__((__packed__)) r[8];
+};
+
 struct xsave_struct
 {
     union {                                  /* FPU/MMX, SSE */

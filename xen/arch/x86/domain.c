@@ -751,6 +751,37 @@ int arch_set_info_guest(
 
     v->fpu_initialised = !!(flags & VGCF_I387_VALID);
 
+    if ( !v->fpu_initialised )
+    {
+        if ( v->arch.xsave_area )
+        {
+          memset(&v->arch.xsave_area->xsave_hdr, 0,
+                 sizeof(v->arch.xsave_area->xsave_hdr));
+          v->arch.xsave_area->fpu_sse.mxcsr = MXCSR_DEFAULT;
+        }
+        else
+        {
+            if ( cpu_has_fxsr )
+            {
+                typeof(v->arch.xsave_area->fpu_sse) *fpu_sse =
+                    (void *)v->arch.guest_context.fpu_ctxt.x;
+
+                memset(fpu_sse, 0, sizeof(*fpu_sse));
+                fpu_sse->fcw = FCW_DEFAULT;
+                fpu_sse->mxcsr = MXCSR_DEFAULT;
+            }
+            else
+            {
+                struct ix87_state *fpu =
+                    (void *)v->arch.guest_context.fpu_ctxt.x;
+
+                memset(fpu, 0, sizeof(*fpu));
+                fpu->env.fcw = FCW_DEFAULT;
+                fpu->env.ftw = 0xffff;
+            }
+        }
+    }
+
     v->arch.flags &= ~TF_kernel_mode;
     if ( (flags & VGCF_in_kernel) || is_hvm_vcpu(v)/*???*/ )
         v->arch.flags |= TF_kernel_mode;
