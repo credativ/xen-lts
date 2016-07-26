@@ -92,7 +92,7 @@ static inline void *map_domain_gfn(struct p2m_domain *p2m,
                                    p2m_type_t *p2mt,
                                    uint32_t *rc) 
 {
-    if ( gfn_x(gfn) >> p2m->domain->arch.paging.gfn_bits )
+    if ( (unsigned long long)gfn_x(gfn) >> p2m->domain->arch.paging.gfn_bits )
     {
         *rc = _PAGE_INVALID_BIT;
         return NULL;
@@ -328,7 +328,7 @@ guest_walk_tables(struct vcpu *v, struct p2m_domain *p2m,
     /* If this guest has a restricted physical address space then the
      * target GFN must fit within it. */
     if ( !(rc & _PAGE_PRESENT)
-         && gfn_x(guest_l1e_get_gfn(gw->l1e)) >> d->arch.paging.gfn_bits )
+         && (unsigned long long)gfn_x(guest_l1e_get_gfn(gw->l1e)) >> d->arch.paging.gfn_bits )
         rc |= _PAGE_INVALID_BITS;
 
     return rc;
