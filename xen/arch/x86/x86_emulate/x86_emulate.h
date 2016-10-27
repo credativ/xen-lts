@@ -99,6 +99,7 @@ struct segment_register {
 /* FPU sub-types which may be requested via ->get_fpu(). */
 enum x86_emulate_fpu_type {
     X86EMUL_FPU_fpu, /* Standard FPU coprocessor instruction set */
+    X86EMUL_FPU_wait, /* WAIT/FWAIT instruction */
     X86EMUL_FPU_mmx  /* MMX instruction set (%mm0-%mm7) */
 };
 

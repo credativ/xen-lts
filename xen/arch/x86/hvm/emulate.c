@@ -909,6 +909,7 @@ static int hvmemul_get_fpu(
     switch ( type )
     {
     case X86EMUL_FPU_fpu:
+    case X86EMUL_FPU_wait:
         break;
     case X86EMUL_FPU_mmx:
         if ( !cpu_has_mmx )

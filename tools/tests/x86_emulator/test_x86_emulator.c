@@ -53,11 +53,28 @@ static int cmpxchg(
     return X86EMUL_OKAY;
 }
 
+static int read_cr(
+    unsigned int reg,
+    unsigned long *val,
+    struct x86_emulate_ctxt *ctxt)
+{
+    /* Fake just enough state for the emulator's _get_fpu() to be happy. */
+    switch ( reg )
+    {
+    case 0:
+        *val = 0x00000001; /* PE */
+        return X86EMUL_OKAY;
+    }
+
+    return X86EMUL_UNHANDLEABLE;
+}
+
 static struct x86_emulate_ops emulops = {
     .read       = read,
     .insn_fetch = read,
     .write      = write,
     .cmpxchg    = cmpxchg,
+    .read_cr    = read_cr,
 };
 
 int main(int argc, char **argv)
