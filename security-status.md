@@ -122,3 +122,12 @@
 | XSA-179  | ?? |
 | XSA-180  | ?? |
 | XSA-181  | not affected (ARM) |
+| XSA-182  | ?? |
+| XSA-183  | ?? |
+| XSA-184  | ?? |
+| XSA-185  | ?? |
+| XSA-186  | ?? |
+| XSA-187  | ?? |
+| XSA-188  | ?? |
+| XSA-189  | unused |
+| XSA-190  | fixed |
