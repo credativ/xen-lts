@@ -52,6 +52,7 @@
 
 #include <xen/hvm/hvm_info_table.h>
 
+#include <assert.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -290,26 +291,30 @@ PicState2 *isa_pic;
 static IOPortReadFunc default_ioport_readb, default_ioport_readw, default_ioport_readl;
 static IOPortWriteFunc default_ioport_writeb, default_ioport_writew, default_ioport_writel;
 
-static uint32_t ioport_read(int index, uint32_t address)
+static uint32_t ioport_read(int index, uint16_t address)
 {
     static IOPortReadFunc *default_func[3] = {
         default_ioport_readb,
         default_ioport_readw,
         default_ioport_readl
     };
+    if (address >= MAX_IOPORTS)
+        abort();
     IOPortReadFunc *func = ioport_read_table[index][address];
     if (!func)
         func = default_func[index];
     return func(ioport_opaque[address], address);
 }
 
-static void ioport_write(int index, uint32_t address, uint32_t data)
+static void ioport_write(int index, uint16_t address, uint32_t data)
 {
     static IOPortWriteFunc *default_func[3] = {
         default_ioport_writeb,
         default_ioport_writew,
         default_ioport_writel
     };
+    if (address >= MAX_IOPORTS)
+        abort();
     IOPortWriteFunc *func = ioport_write_table[index][address];
     if (!func)
         func = default_func[index];

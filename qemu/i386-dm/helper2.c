@@ -333,6 +333,9 @@ static void cpu_ioreq_pio(CPUState *env, ioreq_t *req)
 
     sign = req->df ? -1 : 1;
 
+    req->addr &= 0x0ffffU;
+
+
     if (req->size > sizeof(uint32_t)) {
         hw_error("PIO: bad size (%u)", req->size);
     }
