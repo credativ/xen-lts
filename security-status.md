@@ -125,9 +125,23 @@
 | XSA-182  | ?? |
 | XSA-183  | ?? |
 | XSA-184  | ?? |
-| XSA-185  | ?? |
+| XSA-185  | fixed |
 | XSA-186  | ?? |
-| XSA-187  | ?? |
+| XSA-187  | fixed |
 | XSA-188  | ?? |
 | XSA-189  | unused |
 | XSA-190  | fixed |
+| XSA-191  | fixed |
+| XSA-192  | fixed |
+| XSA-193  | ?? |
+| XSA-194  | ?? |
+| XSA-195  | fixed |
+| XSA-196  | ?? |
+| XSA-197  | fixed |
+| XSA-198  | fixed |
+| XSA-199  | ?? |
+| XSA-200  | ?? |
+| XSA-201  | ?? |
+| XSA-202  | ?? |
+| XSA-203  | not affected (4.6) |
+| XSA-204  | ?? |
