@@ -142,6 +142,6 @@
 | XSA-199  | ?? |
 | XSA-200  | ?? |
 | XSA-201  | ?? |
-| XSA-202  | ?? |
+| XSA-202  | fixed |
 | XSA-203  | not affected (4.6) |
-| XSA-204  | ?? |
+| XSA-204  | fixed |
