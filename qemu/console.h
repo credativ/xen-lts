@@ -98,8 +98,6 @@ struct DisplayChangeListener {
     void (*dpy_resize)(struct DisplayState *s);
     void (*dpy_setdata)(struct DisplayState *s);
     void (*dpy_refresh)(struct DisplayState *s);
-    void (*dpy_copy)(struct DisplayState *s, int src_x, int src_y,
-                     int dst_x, int dst_y, int w, int h);
     void (*dpy_fill)(struct DisplayState *s, int x, int y,
                      int w, int h, uint32_t c);
     void (*dpy_text_cursor)(struct DisplayState *s, int x, int y);
@@ -211,18 +209,6 @@ static inline void dpy_refresh(DisplayState *s)
     }
 }
 
-static inline void dpy_copy(struct DisplayState *s, int src_x, int src_y,
-                             int dst_x, int dst_y, int w, int h) {
-    struct DisplayChangeListener *dcl = s->listeners;
-    while (dcl != NULL) {
-        if (dcl->dpy_copy)
-            dcl->dpy_copy(s, src_x, src_y, dst_x, dst_y, w, h);
-        else /* TODO */
-            dcl->dpy_update(s, dst_x, dst_y, w, h);
-        dcl = dcl->next;
-    }
-}
-
 static inline void dpy_fill(struct DisplayState *s, int x, int y,
                              int w, int h, uint32_t c) {
     struct DisplayChangeListener *dcl = s->listeners;
@@ -297,8 +283,6 @@ void text_consoles_set_display(DisplayState *ds);
 void console_select(unsigned int index);
 void console_color_init(DisplayState *ds);
 void qemu_console_resize(DisplayState *ds, int width, int height);
-void qemu_console_copy(DisplayState *ds, int src_x, int src_y,
-                int dst_x, int dst_y, int w, int h);
 
 /* sdl.c */
 void sdl_display_init(DisplayState *ds, int full_screen, int no_frame, int opengl_enabled);

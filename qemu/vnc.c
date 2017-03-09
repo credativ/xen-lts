@@ -572,36 +572,6 @@ static void send_framebuffer_update(VncState *vs, int x, int y, int w, int h)
 	    send_framebuffer_update_raw(vs, x, y, w, h);
 }
 
-static void vnc_copy(DisplayState *ds, int src_x, int src_y, int dst_x, int dst_y, int w, int h)
-{
-    VncState *vs = ds->opaque;
-    int updating_client = 1;
-
-    if (!vs->update_requested ||
-        src_x < vs->visible_x || src_y < vs->visible_y ||
-	dst_x < vs->visible_x || dst_y < vs->visible_y ||
-	(src_x + w) > (vs->visible_x + vs->visible_w) ||
-	(src_y + h) > (vs->visible_y + vs->visible_h) ||
-	(dst_x + w) > (vs->visible_x + vs->visible_w) ||
-	(dst_y + h) > (vs->visible_y + vs->visible_h))
-	updating_client = 0;
-
-    if (updating_client)
-        _vnc_update_client(vs);
-
-    if (updating_client && vs->csock != -1 && !vs->has_update) {
-	vnc_write_u8(vs, 0);  /* msg id */
-	vnc_write_u8(vs, 0);
-	vnc_write_u16(vs, 1); /* number of rects */
-	vnc_framebuffer_update(vs, dst_x, dst_y, w, h, 1);
-	vnc_write_u16(vs, src_x);
-	vnc_write_u16(vs, src_y);
-	vnc_flush(vs);
-        vs->update_requested--;
-    } else
-	framebuffer_set_updated(vs, dst_x, dst_y, w, h);
-}
-
 static int find_update_height(VncState *vs, int y, int maxy, int last_x, int x)
 {
     int h;
@@ -1543,15 +1513,11 @@ static void set_encodings(VncState *vs, int32_t *encodings, size_t n_encodings)
     vs->has_pointer_type_change = 0;
     vs->has_WMVi = 0;
     vs->absolute = -1;
-    dcl->dpy_copy = NULL;
 
     for (i = n_encodings - 1; i >= 0; i--) {
 	switch (encodings[i]) {
 	case 0: /* Raw */
 	    vs->has_hextile = 0;
-	    break;
-	case 1: /* CopyRect */
-	    dcl->dpy_copy = vnc_copy;
 	    break;
 	case 5: /* Hextile */
 	    vs->has_hextile = 1;
@@ -2418,7 +2384,6 @@ static void vnc_listen_read(void *opaque)
 	vs->has_resize = 0;
 	vs->has_hextile = 0;
         vs->update_requested = 0;
-	dcl->dpy_copy = NULL;
 	vnc_timer_init(vs);
     }
 }
