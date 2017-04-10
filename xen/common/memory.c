@@ -294,8 +294,8 @@ static long memory_exchange(XEN_GUEST_HANDLE(xen_memory_exchange_t) arg)
         goto fail_early;
     }
 
-    if ( !guest_handle_okay(exch.in.extent_start, exch.in.nr_extents) ||
-         !guest_handle_okay(exch.out.extent_start, exch.out.nr_extents) )
+    if ( !guest_handle_subrange_okay(exch.in.extent_start, exch.nr_exchanged,
+                                     exch.in.nr_extents - 1) )
     {
         rc = -EFAULT;
         goto fail_early;
@@ -315,11 +315,27 @@ static long memory_exchange(XEN_GUEST_HANDLE(xen_memory_exchange_t) arg)
     {
         in_chunk_order  = exch.out.extent_order - exch.in.extent_order;
         out_chunk_order = 0;
+
+        if ( !guest_handle_subrange_okay(exch.out.extent_start,
+                                         exch.nr_exchanged >> in_chunk_order,
+                                         exch.out.nr_extents - 1) )
+        {
+            rc = -EFAULT;
+            goto fail_early;
+        }
     }
     else
     {
         in_chunk_order  = 0;
         out_chunk_order = exch.in.extent_order - exch.out.extent_order;
+
+        if ( !guest_handle_subrange_okay(exch.out.extent_start,
+                                         exch.nr_exchanged << out_chunk_order,
+                                         exch.out.nr_extents - 1) )
+        {
+            rc = -EFAULT;
+            goto fail_early;
+        }
     }
 
     rc = rcu_lock_target_domain_by_id(exch.in.domid, &d);
