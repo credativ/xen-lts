@@ -1243,30 +1243,31 @@ static bool_t check_multicall_32bit_clean(struct multicall_entry *multi)
     return true;
 }
 
-void do_multicall_call(struct multicall_entry *multi)
+enum mc_disposition do_multicall_call(struct multicall_entry *multi)
 {
     arm_hypercall_fn_t call = NULL;
 
     if ( multi->op >= ARRAY_SIZE(arm_hypercall_table) )
     {
         multi->result = -ENOSYS;
-        return;
+        return mc_continue;
     }
 
     call = arm_hypercall_table[multi->op].fn;
     if ( call == NULL )
     {
         multi->result = -ENOSYS;
-        return;
+        return mc_continue;
     }
 
     if ( is_pv32_domain(current->domain) &&
          !check_multicall_32bit_clean(multi) )
-        return;
+        return mc_continue;
 
     multi->result = call(multi->args[0], multi->args[1],
                          multi->args[2], multi->args[3],
                          multi->args[4]);
+    return mc_continue; /* XXX XSA-213 remains! */
 }
 
 /*
