@@ -522,7 +522,8 @@ do{ asm volatile (                                                      \
 })
 #define truncate_ea(ea) truncate_word((ea), ad_bytes)
 
-#define mode_64bit() (def_ad_bytes == 8)
+//#define mode_64bit() (def_ad_bytes == 8)
+#define mode_64bit() (ctxt->addr_size == 64)
 
 #define fail_if(p)                                      \
 do {                                                    \
@@ -993,6 +994,49 @@ in_protmode(
     return !(in_realmode(ctxt, ops) || (ctxt->regs->eflags & EFLG_VM));
 }
 
+
+#define EAX 0
+#define ECX 1
+#define EDX 2
+#define EBX 3
+
+
+static bool_t vcpu_has(
+    unsigned int eax,
+    unsigned int reg,
+    unsigned int bit,
+    struct x86_emulate_ctxt *ctxt,
+    const struct x86_emulate_ops *ops)
+{
+    unsigned int ebx = 0, ecx = 0, edx = 0;
+    int rc = X86EMUL_OKAY;
+
+    fail_if(!ops->cpuid);
+    rc = ops->cpuid(&eax, &ebx, &ecx, &edx, ctxt);
+    if ( rc == X86EMUL_OKAY )
+    {
+        switch ( reg )
+        {
+        case EAX: reg = eax; break;
+        case EBX: reg = ebx; break;
+        case ECX: reg = ecx; break;
+        case EDX: reg = edx; break;
+        default: BUG();
+        }
+        if ( !(reg & (1U << bit)) )
+            rc = ~X86EMUL_OKAY;
+    }
+
+ done:
+    return rc == X86EMUL_OKAY;
+}
+
+
+#define vcpu_must_have(leaf, reg, bit)                                 \
+    generate_exception_if(!vcpu_has(leaf, reg, bit, ctxt, ops), EXC_UD, -1)
+
+#define vcpu_must_have_cx16() vcpu_must_have(0x00000001, ECX, 13)
+
 static int
 in_longmode(
     struct x86_emulate_ctxt *ctxt,
@@ -1199,6 +1243,32 @@ load_seg(
 
     return realmode_load_seg(seg, sel, ctxt, ops);
 }
+
+static bool_t is_aligned(enum x86_segment seg, unsigned long offs,
+                         unsigned int size, struct x86_emulate_ctxt *ctxt,
+                         const struct x86_emulate_ops *ops)
+{
+    struct segment_register reg;
+
+    /* Expecting powers of two only. */
+    ASSERT(!(size & (size - 1)));
+
+    if ( mode_64bit() && seg < x86_seg_fs )
+        memset(&reg, 0, sizeof(reg));
+    else
+    {
+        /* No alignment checking when we have no way to read segment data. */
+        if ( !ops->read_segment )
+            return 1;
+
+        if ( ops->read_segment(seg, &reg, ctxt) != X86EMUL_OKAY )
+            return 0;
+    }
+
+    return !((reg.base + offs) & (size - 1));
+}
+
+
 
 void *
 decode_register(
@@ -4238,16 +4308,23 @@ x86_emulate(
 
     case 0xc7: /* Grp9 (cmpxchg8b/cmpxchg16b) */ {
         unsigned long old[2], exp[2], new[2];
-        unsigned int i;
 
         generate_exception_if((modrm_reg & 7) != 1, EXC_UD, -1);
         generate_exception_if(ea.type != OP_MEM, EXC_UD, -1);
-        op_bytes *= 2;
+        if ( op_bytes == 8)
+           {
+             vcpu_must_have_cx16();
+            generate_exception_if(!is_aligned(ea.mem.seg, ea.mem.off, 16,
+                                              ctxt, ops),
+                                  EXC_GP, 0);
+            op_bytes = 16;
+          }
+       else
+         op_bytes = 8;
 
         /* Get actual old value. */
-        for ( i = 0; i < (op_bytes/sizeof(long)); i++ )
-            if ( (rc = read_ulong(ea.mem.seg, ea.mem.off + i*sizeof(long),
-                                  &old[i], sizeof(long), ctxt, ops)) != 0 )
+        if ( (rc = ops->read(ea.mem.seg, ea.mem.off, old, op_bytes,
+                              ctxt)) != 0 )
                 goto done;
 
         /* Get expected and proposed values. */
