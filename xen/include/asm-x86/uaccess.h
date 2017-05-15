@@ -131,13 +131,13 @@ extern void __put_user_bad(void);
 	__gu_err;                                               \
 })
 
-#define __get_user_check(x,ptr,size)                            \
-({                                                              \
-	long __gu_err;                                          \
-	__typeof__(*(ptr)) __user *__gu_addr = (ptr);           \
-	__get_user_size((x),__gu_addr,(size),__gu_err,-EFAULT); \
-	if (!access_ok(__gu_addr,size)) __gu_err = -EFAULT;     \
-	__gu_err;                                               \
+#define __get_user_check(x,ptr,size)					\
+({									\
+	long __gu_err = -EFAULT;					\
+	__typeof__(*(ptr)) __user *__gu_addr = (ptr);			\
+	if (access_ok(__gu_addr,size))					\
+		__get_user_size((x),__gu_addr,(size),__gu_err,-EFAULT);	\
+	__gu_err;							\
 })							
 
 struct __large_struct { unsigned long buf[100]; };
