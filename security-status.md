@@ -140,8 +140,20 @@
 | XSA-197  | fixed |
 | XSA-198  | fixed |
 | XSA-199  | ?? |
-| XSA-200  | ?? |
+| XSA-200  | fixed |
 | XSA-201  | ?? |
 | XSA-202  | fixed |
 | XSA-203  | not affected (4.6) |
 | XSA-204  | fixed |
+| XSA-205  | unused |
+| XSA-206  | ?? |
+| XSA-207  | ?? |
+| XSA-208  | ?? |
+| XSA-209  | ?? |
+| XSA-210  | ?? |
+| XSA-211  | ?? |
+| XSA-212  | ?? |
+| XSA-213  | ?? |
+| XSA-214  | fixed |
+| XSA-215  | fixed |
+| CVE-2017-7995 | fixed |
