@@ -153,7 +153,7 @@
 | XSA-210  | ?? |
 | XSA-211  | ?? |
 | XSA-212  | ?? |
-| XSA-213  | ?? |
+| XSA-213  | fixed |
 | XSA-214  | fixed |
 | XSA-215  | fixed |
 | CVE-2017-7995 | fixed |
