@@ -7,8 +7,6 @@
 
 #include <xen/errno.h>
 
-#ifdef __x86_64__
-
 enum mc_disposition {
     mc_continue,
     mc_exit,
@@ -21,6 +19,8 @@ enum mc_disposition {
        : likely(guest_kernel_mode(current,                   \
                                   guest_cpu_user_regs()))    \
          ? mc_continue : mc_preempt)
+
+#ifdef __x86_64__
 
 #define do_multicall_call(_call)                             \
     ({                                                       \
@@ -89,6 +89,7 @@ enum mc_disposition {
 #else
 
 #define do_multicall_call(_call)                             \
+  ({                                                         \
         __asm__ __volatile__ (                               \
             "    movl  %c1(%0),%%eax; "                      \
             "    pushl %c2+5*%c3(%0); "                      \
@@ -113,7 +114,9 @@ enum mc_disposition {
               "i" (sizeof(*(_call)->args)),                  \
               "i" (offsetof(__typeof__(*_call), result))     \
               /* all the caller-saves registers */           \
-            : "eax", "ecx", "edx" )                          \
+            : "eax", "ecx", "edx" );                         \
+        multicall_ret(_call);                                \
+    })
 
 #endif
 
