@@ -651,6 +651,15 @@ uint64_t get_cpu_idle_time(unsigned int cpu);
 void watchdog_domain_init(struct domain *d);
 void watchdog_domain_destroy(struct domain *d);
 
+/*
+ * Use this check when the following are both true:
+ *  - Using this feature or interface requires full access to the hardware
+ *    (that is, this would not be suitable for a driver domain)
+ *  - There is never a reason to deny the hardware domain access to this
+ */
+#define is_hardware_domain(_d) ((_d) == dom0)
+
+
 #define IS_PRIV(_d) ((_d)->is_privileged)
 #define IS_PRIV_FOR(_d, _t) (IS_PRIV(_d) || ((_d)->target && (_d)->target == (_t)))
 
