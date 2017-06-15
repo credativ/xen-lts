@@ -851,7 +851,9 @@ __gnttab_unmap_common(
         return;
     }
 
+    smp_rmb();
     map = &maptrack_entry(lgt, op->handle);
+
     spin_lock(&lgt->lock);
 
     if ( unlikely(!map->flags) )
