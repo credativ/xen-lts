@@ -1529,6 +1529,7 @@ gnttab_transfer(
     for ( i = 0; i < count; i++ )
     {
         bool_t okay;
+        int rc;
 
         if (i && hypercall_preempt_check())
             return i;
@@ -1579,27 +1580,33 @@ gnttab_transfer(
             goto copyback;
         }
 
-        guest_physmap_remove_page(d, gop.mfn, mfn, 0);
+        rc = guest_physmap_remove_page(d, gop.mfn, mfn, 0);
         flush_tlb_mask(d->domain_dirty_cpumask);
+        if ( rc )
+        {
+            gdprintk(XENLOG_INFO,
+                     "gnttab_transfer: can't remove GFN %"PRI_xen_pfn" (MFN %lx)\n",
+                     gop.mfn, mfn);
+            gop.status = GNTST_general_error;
+            goto put_gfn_and_copyback;
+        }
 
         /* Find the target domain. */
         if ( unlikely((e = rcu_lock_domain_by_id(gop.domid)) == NULL) )
         {
-            put_gfn(d, gop.mfn);
             gdprintk(XENLOG_INFO, "gnttab_transfer: can't find domain %d\n",
                     gop.domid);
-            page->count_info &= ~(PGC_count_mask|PGC_allocated);
-            free_domheap_page(page);
             gop.status = GNTST_bad_domain;
-            goto copyback;
+            goto put_gfn_and_copyback;
         }
 
         if ( xsm_grant_transfer(XSM_HOOK, d, e) )
         {
-            put_gfn(d, gop.mfn);
             gop.status = GNTST_permission_denied;
         unlock_and_copyback:
             rcu_unlock_domain(e);
+        put_gfn_and_copyback:
+            put_gfn(d, gop.mfn);
             page->count_info &= ~(PGC_count_mask|PGC_allocated);
             free_domheap_page(page);
             goto copyback;
@@ -1650,12 +1657,8 @@ gnttab_transfer(
                          "Transferee (d%d) has no headroom (tot %u, max %u)\n",
                          e->domain_id, e->tot_pages, e->max_pages);
 
-            rcu_unlock_domain(e);
-            put_gfn(d, gop.mfn);
-            page->count_info &= ~(PGC_count_mask|PGC_allocated);
-            free_domheap_page(page);
             gop.status = GNTST_general_error;
-            goto copyback;
+            goto unlock_and_copyback;
         }
 
         /* Okay, add the page to 'e'. */
@@ -1684,13 +1687,8 @@ gnttab_transfer(
 
             if ( drop_dom_ref )
                 put_domain(e);
-            rcu_unlock_domain(e);
-
-            put_gfn(d, gop.mfn);
-            page->count_info &= ~(PGC_count_mask|PGC_allocated);
-            free_domheap_page(page);
             gop.status = GNTST_general_error;
-            goto copyback;
+            goto unlock_and_copyback;
         }
 
         page_list_add_tail(page, &e->page_list);

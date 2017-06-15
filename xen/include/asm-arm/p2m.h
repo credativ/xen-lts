@@ -108,9 +108,9 @@ static inline int guest_physmap_add_page(struct domain *d,
     return guest_physmap_add_entry(d, gfn, mfn, page_order, p2m_ram_rw);
 }
 
-void guest_physmap_remove_page(struct domain *d,
-                               unsigned long gpfn,
-                               unsigned long mfn, unsigned int page_order);
+int __must_check
+guest_physmap_remove_page(struct domain *d, unsigned long gfn,
+                          unsigned long mfn, unsigned int page_order);
 
 unsigned long gmfn_to_mfn(struct domain *d, unsigned long gpfn);
 

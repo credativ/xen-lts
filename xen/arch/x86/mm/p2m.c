@@ -504,7 +504,7 @@ void p2m_final_teardown(struct domain *d)
 }
 
 
-static void
+static int
 p2m_remove_page(struct p2m_domain *p2m, unsigned long gfn, unsigned long mfn,
                 unsigned int page_order)
 {
@@ -518,7 +518,7 @@ p2m_remove_page(struct p2m_domain *p2m, unsigned long gfn, unsigned long mfn,
         if ( need_iommu(p2m->domain) )
             for ( i = 0; i < (1 << page_order); i++ )
                 iommu_unmap_page(p2m->domain, mfn + i);
-        return;
+        return 0;
     }
 
     ASSERT(gfn_locked_by_me(p2m, gfn));
@@ -534,17 +534,21 @@ p2m_remove_page(struct p2m_domain *p2m, unsigned long gfn, unsigned long mfn,
             ASSERT( !p2m_is_valid(t) || mfn + i == mfn_x(mfn_return) );
         }
     }
-    set_p2m_entry(p2m, gfn, _mfn(INVALID_MFN), page_order, p2m_invalid, p2m->default_access);
+    return !set_p2m_entry(p2m, gfn, _mfn(INVALID_MFN), page_order, p2m_invalid, p2m->default_access);
 }
 
-void
+int
 guest_physmap_remove_page(struct domain *d, unsigned long gfn,
                           unsigned long mfn, unsigned int page_order)
 {
+    int rc;
+
     struct p2m_domain *p2m = p2m_get_hostp2m(d);
     gfn_lock(p2m, gfn, page_order);
-    p2m_remove_page(p2m, gfn, mfn, page_order);
+    rc = p2m_remove_page(p2m, gfn, mfn, page_order);
     gfn_unlock(p2m, gfn, page_order);
+
+    return rc;
 }
 
 int

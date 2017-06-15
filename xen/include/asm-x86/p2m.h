@@ -495,9 +495,9 @@ static inline int guest_physmap_add_page(struct domain *d,
 }
 
 /* Remove a page from a domain's p2m table */
-void guest_physmap_remove_page(struct domain *d,
-                               unsigned long gfn,
-                               unsigned long mfn, unsigned int page_order);
+int __must_check
+guest_physmap_remove_page(struct domain *d, unsigned long gfn,
+                          unsigned long mfn, unsigned int page_order);
 
 /* Set a p2m range as populate-on-demand */
 int guest_physmap_mark_populate_on_demand(struct domain *d, unsigned long gfn,
