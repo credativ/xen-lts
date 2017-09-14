@@ -5,6 +5,8 @@
 
 #define NODES_SHIFT 6
 
+typedef u8 nodeid_t;
+
 extern int srat_rev;
 
 extern unsigned char cpu_to_node[];

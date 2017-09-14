@@ -36,8 +36,10 @@ do {                                                            \
 #ifndef NDEBUG
 #define ASSERT(p) \
     do { if ( unlikely(!(p)) ) assert_failed(#p); } while (0)
+#define ASSERT_UNREACHABLE() assert_failed("unreachable")
 #else
 #define ASSERT(p) ((void)0)
+#define ASSERT_UNREACHABLE() do { } while (0)
 #endif
 
 #define ABS(_x) ({                              \

@@ -263,6 +263,31 @@ static void decrease_reservation(struct memop_args *a)
     a->nr_done = i;
 }
 
+static bool_t propagate_node(unsigned int xmf, unsigned int *memflags)
+{
+    const struct domain *currd = current->domain;
+
+    BUILD_BUG_ON(XENMEMF_get_node(0) != NUMA_NO_NODE);
+    BUILD_BUG_ON(MEMF_get_node(0) != NUMA_NO_NODE);
+
+    if ( XENMEMF_get_node(xmf) == NUMA_NO_NODE )
+        return 1;
+
+    if ( is_hardware_domain(currd) || is_control_domain(currd) )
+    {
+        if ( XENMEMF_get_node(xmf) >= MAX_NUMNODES )
+            return 0;
+
+        *memflags |= MEMF_node(XENMEMF_get_node(xmf));
+        if ( xmf & XENMEMF_exact_node_request )
+            *memflags |= MEMF_exact_node;
+    }
+    else if ( xmf & XENMEMF_exact_node_request )
+        return 0;
+
+    return 1;
+}
+
 static long memory_exchange(XEN_GUEST_HANDLE(xen_memory_exchange_t) arg)
 {
     struct xen_memory_exchange exch;

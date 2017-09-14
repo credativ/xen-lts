@@ -659,6 +659,8 @@ void watchdog_domain_destroy(struct domain *d);
  */
 #define is_hardware_domain(_d) ((_d) == dom0)
 
+/* This check is for functionality specific to a control domain */
+#define is_control_domain(_d) ((_d)->is_privileged)
 
 #define IS_PRIV(_d) ((_d)->is_privileged)
 #define IS_PRIV_FOR(_d, _t) (IS_PRIV(_d) || ((_d)->target && (_d)->target == (_t)))
