@@ -4355,7 +4355,6 @@ static int replace_grant_p2m_mapping(
     p2m_type_t type;
     mfn_t old_mfn;
     struct domain *d = current->domain;
-    int rc;
 
     if ( new_addr != 0 || (flags & GNTMAP_contains_pte) )
         return GNTST_general_error;
