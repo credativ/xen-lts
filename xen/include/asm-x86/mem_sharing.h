@@ -39,6 +39,24 @@ int mem_sharing_nominate_page(struct p2m_domain *p2m,
 int mem_sharing_unshare_page(struct p2m_domain *p2m, 
                              unsigned long gfn, 
                              uint16_t flags);
+
+
+/* If called by a foreign domain, possible errors are
+ *   -EBUSY -> ring full
+ *   -ENOSYS -> no ring to begin with
+ * and the foreign mapper is responsible for retrying.
+ *
+ * If called by the guest vcpu itself and allow_sleep is set, may 
+ * sleep on a wait queue, so the caller is responsible for not 
+ * holding locks on entry. It may only fail with ENOSYS 
+ *
+ * If called by the guest vcpu itself and allow_sleep is not set,
+ * then it's the same as a foreign domain.
+ */
+int mem_sharing_notify_enomem(struct domain *d, unsigned long gfn,
+                                bool_t allow_sleep);
+
+
 int mem_sharing_sharing_resume(struct domain *d);
 int mem_sharing_cache_resize(struct p2m_domain *p2m, int new_size);
 int mem_sharing_domctl(struct domain *d, 

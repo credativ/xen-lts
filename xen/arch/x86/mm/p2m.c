@@ -116,6 +116,125 @@ static unsigned long p2m_type_to_flags(p2m_type_t t, mfn_t mfn)
     }
 }
 
+/* ---> backported from 4.5 */
+
+
+mfn_t __get_gfn_type_access(struct p2m_domain *p2m, unsigned long gfn,
+                    p2m_type_t *t, p2m_access_t *a, p2m_query_t q,
+                    unsigned int *page_order, bool_t locked)
+{
+    mfn_t mfn;
+
+    /* Unshare makes no sense withuot populate. */
+    if ( q & P2M_UNSHARE )
+        q |= P2M_ALLOC;
+
+    if ( !p2m || !paging_mode_translate(p2m->domain) )
+    {
+        /* Not necessarily true, but for non-translated guests, we claim
+         * it's the most generic kind of memory */
+        *t = p2m_ram_rw;
+        return _mfn(gfn);
+    }
+
+    if ( locked )
+        /* Grab the lock here, don't release until put_gfn */
+        gfn_lock(p2m, gfn, 0);
+
+    mfn = p2m->get_entry(p2m, gfn, t, a, q);
+
+    if ( (q & P2M_UNSHARE) && p2m_is_shared(*t) )
+    {
+        ASSERT(!p2m_is_nestedp2m(p2m));
+        /* Try to unshare. If we fail, communicate ENOMEM without
+         * sleeping. */
+        mfn = p2m->get_entry(p2m, gfn, t, a, q);
+    }
+
+    if (unlikely((p2m_is_broken(*t))))
+    {
+        /* Return invalid_mfn to avoid caller's access */
+        mfn = _mfn(INVALID_MFN);
+        if ( q & P2M_ALLOC )
+            domain_crash(p2m->domain);
+    }
+
+    return mfn;
+}
+
+void __put_gfn(struct p2m_domain *p2m, unsigned long gfn)
+{
+    if ( !p2m || !paging_mode_translate(p2m->domain) )
+        /* Nothing to do in this case */
+        return;
+
+    ASSERT(gfn_locked_by_me(p2m, gfn));
+
+    gfn_unlock(p2m, gfn, 0);
+}
+
+/* Atomically look up a GFN and take a reference count on the backing page. */
+struct page_info *get_page_from_gfn_p2m(
+    struct domain *d, struct p2m_domain *p2m, unsigned long gfn,
+    p2m_type_t *t, p2m_access_t *a, p2m_query_t q)
+{
+    struct page_info *page = NULL;
+    p2m_access_t _a;
+    p2m_type_t _t;
+    mfn_t mfn;
+
+    /* Allow t or a to be NULL */
+    t = t ?: &_t;
+    a = a ?: &_a;
+
+    if ( likely(!p2m_locked_by_me(p2m)) )
+    {
+        /* Fast path: look up and get out */
+        p2m_lock(p2m);
+        mfn = __get_gfn_type_access(p2m, gfn, t, a, 0, NULL, 0);
+        if ( p2m_is_any_ram(*t) && mfn_valid(mfn)
+             && !((q & P2M_UNSHARE) && p2m_is_shared(*t)) )
+        {
+            page = mfn_to_page(mfn);
+            if ( unlikely(p2m_is_foreign(*t)) )
+            {
+                struct domain *fdom = page_get_owner_and_reference(page);
+                ASSERT(fdom != d);
+                if ( fdom == NULL )
+                    page = NULL;
+            }
+            else if ( !get_page(page, d)
+                      /* Page could be shared */
+                      && !get_page(page, dom_cow) )
+                page = NULL;
+        }
+        p2m_unlock(p2m);
+
+        if ( page )
+            return page;
+
+        /* Error path: not a suitable GFN at all */
+        if ( !p2m_is_ram(*t) && !p2m_is_paging(*t) && !p2m_is_pod(*t) )
+            return NULL;
+    }
+
+    /* Slow path: take the write lock and do fixups */
+    mfn = get_gfn_type_access(p2m, gfn, t, a, q, NULL);
+    if ( p2m_is_ram(*t) && mfn_valid(mfn) )
+    {
+        page = mfn_to_page(mfn);
+        if ( !get_page(page, d) )
+            page = NULL;
+    }
+    put_gfn(d, gfn);
+
+    return page;
+}
+
+
+/* --- backport from 4.5. END */
+
+
 #if P2M_AUDIT
 static void audit_p2m(struct p2m_domain *p2m, int strict_m2p);
 #else
@@ -2481,6 +2600,23 @@ out:
 
     return rc;
 }
+
+/* ---> Backport from 4.5  -- */
+
+int
+guest_physmap_remove_page(struct domain *d, unsigned long gfn,
+                          unsigned long mfn, unsigned int page_order)
+{
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
+    gfn_lock(p2m, gfn, page_order);
+    p2m_remove_page(p2m, gfn, mfn, page_order);
+    gfn_unlock(p2m, gfn, page_order);
+
+    return 0;
+}
+
+
+/* ---> end of Backport */
 
 int
 guest_physmap_add_entry(struct p2m_domain *p2m, unsigned long gfn,

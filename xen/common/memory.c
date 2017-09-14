@@ -161,14 +161,15 @@ int guest_remove_page(struct domain *d, unsigned long gmfn)
     p2m_type_t p2mt;
 #endif
     unsigned long mfn;
+    int rc;
 
 #ifdef CONFIG_X86
     mfn = mfn_x(gfn_to_mfn(p2m_get_hostp2m(d), gmfn, &p2mt)); 
     if ( unlikely(p2m_is_paging(p2mt)) )
     {
-        guest_physmap_remove_page(d, gmfn, mfn, 0);
+        rc = guest_physmap_remove_page(d, gmfn, mfn, 0);
         p2m_mem_paging_drop_page(p2m_get_hostp2m(d), gmfn);
-        return 1;
+        return rc;
     }
 #else
     mfn = gmfn_to_mfn(d, gmfn);
@@ -177,7 +178,7 @@ int guest_remove_page(struct domain *d, unsigned long gmfn)
     {
         gdprintk(XENLOG_INFO, "Domain %u page number %lx invalid\n",
                 d->domain_id, gmfn);
-        return 0;
+        return 1;
     }
             
     page = mfn_to_page(mfn);
@@ -187,15 +188,15 @@ int guest_remove_page(struct domain *d, unsigned long gmfn)
     if(p2m_is_shared(p2mt))
     {
         put_page_and_type(page);
-        guest_physmap_remove_page(d, gmfn, mfn, 0);
-        return 1;
+        rc = guest_physmap_remove_page(d, gmfn, mfn, 0);
+        return rc;
     }
 
 #endif /* CONFIG_X86 */
     if ( unlikely(!get_page(page, d)) )
     {
         gdprintk(XENLOG_INFO, "Bad page free for domain %u\n", d->domain_id);
-        return 0;
+        return 1;
     }
 
     if ( test_and_clear_bit(_PGT_pinned, &page->u.inuse.type_info) )
@@ -204,11 +205,11 @@ int guest_remove_page(struct domain *d, unsigned long gmfn)
     if ( test_and_clear_bit(_PGC_allocated, &page->count_info) )
         put_page(page);
 
-    guest_physmap_remove_page(d, gmfn, mfn, 0);
+    rc = guest_physmap_remove_page(d, gmfn, mfn, 0);
 
     put_page(page);
 
-    return 1;
+    return rc;
 }
 
 static void decrease_reservation(struct memop_args *a)
@@ -252,7 +253,7 @@ static void decrease_reservation(struct memop_args *a)
             continue;
 
         for ( j = 0; j < (1 << a->extent_order); j++ )
-            if ( !guest_remove_page(a->domain, gmfn + j) )
+            if ( guest_remove_page(a->domain, gmfn + j) )
                 goto out;
     }
 
@@ -433,7 +434,7 @@ static long memory_exchange(XEN_GUEST_HANDLE(xen_memory_exchange_t) arg)
             gfn = mfn_to_gmfn(d, mfn);
             /* Pages were unshared above */
             BUG_ON(SHARED_M2P(gfn));
-            guest_physmap_remove_page(d, gfn, mfn, 0);
+            rc = guest_physmap_remove_page(d, gfn, mfn, 0);
             put_page(page);
         }
 

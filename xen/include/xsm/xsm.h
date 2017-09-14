@@ -33,6 +33,24 @@ typedef u32 xsm_magic_t;
 #define XSM_MAGIC 0x00000000
 #endif
 
+/* --> backport from 4.5 for using grant_table.c from 4.5 
+ * --> comments do not apply for 4.1                      
+ */
+
+/* These annotations are used by callers and in dummy.h to document the
+ * default actions of XSM hooks. They should be compiled out otherwise.
+ */
+enum xsm_default {
+    XSM_HOOK,     /* Guests can normally access the hypercall */
+    XSM_DM_PRIV,  /* Device model can perform on its target domain */
+    XSM_TARGET,   /* Can perform on self or your target domain */
+    XSM_PRIV,     /* Privileged - normally restricted to dom0 */
+    XSM_OTHER     /* Something more complex */
+};
+typedef enum xsm_default xsm_default_t;
+/* --> end of backported part */
+
+
 #ifdef XSM_ENABLE
 
 extern char *policy_buffer;

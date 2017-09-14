@@ -88,7 +88,13 @@ typedef enum {
     p2m_ram_paging_in_start = 12, /* Memory that is being paged in */
     p2m_ram_shared = 13,          /* Shared or sharable memory */
     p2m_ram_broken  =14,          /* Broken page, access cause domain crash */
+    p2m_map_foreign  = 15,        /* ram pages from foreign domain */
 } p2m_type_t;
+
+/* Modifiers to the query */
+#define P2M_ALLOC    (1u<<0)   /* Populate PoD and paged-out entries */
+#define P2M_UNSHARE  (1u<<1)   /* Break CoW sharing */
+
 
 /*
  * Additional access types, which are used to further restrict
@@ -158,6 +164,9 @@ typedef enum {
 
 #define P2M_MAGIC_TYPES (p2m_to_mask(p2m_populate_on_demand))
 
+
+#define P2M_POD_TYPES (p2m_to_mask(p2m_populate_on_demand))
+
 /* Pageable types */
 #define P2M_PAGEABLE_TYPES (p2m_to_mask(p2m_ram_rw))
 
@@ -193,6 +202,16 @@ typedef enum {
 #define p2m_is_sharable(_t) (p2m_to_mask(_t) & P2M_SHARABLE_TYPES)
 #define p2m_is_shared(_t)   (p2m_to_mask(_t) & P2M_SHARED_TYPES)
 #define p2m_is_broken(_t)   (p2m_to_mask(_t) & P2M_BROKEN_TYPES)
+
+
+#define p2m_is_pod(_t) (p2m_to_mask(_t) & P2M_POD_TYPES)
+
+#define p2m_is_foreign(_t)  (p2m_to_mask(_t) & p2m_to_mask(p2m_map_foreign))
+
+#define p2m_is_any_ram(_t)  (p2m_to_mask(_t) &                   \
+                             (P2M_RAM_TYPES | P2M_GRANT_TYPES |  \
+                              p2m_to_mask(p2m_map_foreign)))
+
 
 /* Populate-on-demand */
 #define POPULATE_ON_DEMAND_MFN  (1<<9)
@@ -286,6 +305,54 @@ struct p2m_domain {
 #define p2m_get_hostp2m(d)      ((d)->arch.p2m)
 
 #define p2m_get_pagetable(p2m)  ((p2m)->phys_table)
+
+
+/* ---> backported from 4.5 <--- */
+
+/**** p2m query accessors. They lock p2m_lock, and thus serialize
+ * lookups wrt modifications. They _do not_ release the lock on exit.
+ * After calling any of the variants below, caller needs to use
+ * put_gfn. ****/
+
+mfn_t __get_gfn_type_access(struct p2m_domain *p2m, unsigned long gfn,
+                    p2m_type_t *t, p2m_access_t *a, p2m_query_t q,
+                    unsigned int *page_order, bool_t locked);
+
+/* Read a particular P2M table, mapping pages as we go.  Most callers
+ * should _not_ call this directly; use the other get_gfn* functions
+ * below unless you know you want to walk a p2m that isn't a domain's
+ * main one.
+ * If the lookup succeeds, the return value is != INVALID_MFN and 
+ * *page_order is filled in with the order of the superpage (if any) that
+ * the entry was found in.  */
+#define get_gfn_type_access(p, g, t, a, q, o)   \
+        __get_gfn_type_access((p), (g), (t), (a), (q), (o), 1)
+
+/* General conversion function from gfn to mfn */
+static inline mfn_t get_gfn_type(struct domain *d,
+                                    unsigned long gfn, p2m_type_t *t,
+                                    p2m_query_t q)
+{
+    p2m_access_t a;
+    return get_gfn_type_access(p2m_get_hostp2m(d), gfn, t, &a, q, NULL);
+}
+
+/* Syntactic sugar: most callers will use one of these. 
+ * N.B. get_gfn_query() is the _only_ one guaranteed not to take the
+ * p2m lock; none of the others can be called with the p2m or paging
+ * lock held. */
+#define get_gfn(d, g, t)         get_gfn_type((d), (g), (t), P2M_ALLOC)
+#define get_gfn_query(d, g, t)   get_gfn_type((d), (g), (t), 0)
+#define get_gfn_unshare(d, g, t) get_gfn_type((d), (g), (t), \
+                                              P2M_ALLOC | P2M_UNSHARE)
+
+/* Will release the p2m_lock for this gfn entry. */
+void __put_gfn(struct p2m_domain *p2m, unsigned long gfn);
+
+#define put_gfn(d, gfn) __put_gfn(p2m_get_hostp2m((d)), (gfn))
+
+/* ---> end of backport from 4.5 */
+
 
 /* Extract the type from the PTE flags that store it */
 static inline p2m_type_t p2m_flags_to_type(unsigned long flags)
@@ -400,6 +467,34 @@ static inline unsigned long mfn_to_gfn(struct domain *d, mfn_t mfn)
         return mfn_x(mfn);
 }
 
+
+/* Atomically look up a GFN and take a reference count on the backing page.
+ * This makes sure the page doesn't get freed (or shared) underfoot,
+ * and should be used by any path that intends to write to the backing page.
+ * Returns NULL if the page is not backed by RAM.
+ * The caller is responsible for calling put_page() afterwards. */
+struct page_info *get_page_from_gfn_p2m(struct domain *d,
+                                        struct p2m_domain *p2m,
+                                        unsigned long gfn,
+                                        p2m_type_t *t, p2m_access_t *a,
+                                        p2m_query_t q);
+
+static inline struct page_info *get_page_from_gfn(
+    struct domain *d, unsigned long gfn, p2m_type_t *t, p2m_query_t q)
+{
+    struct page_info *page;
+
+    if ( paging_mode_translate(d) )
+        return get_page_from_gfn_p2m(d, p2m_get_hostp2m(d), gfn, t, NULL, q);
+
+    /* Non-translated guests see 1-1 RAM mappings everywhere */
+    if (t)
+        *t = p2m_ram_rw;
+    page = __mfn_to_page(gfn);
+    return mfn_valid(gfn) && get_page(page, d) ? page : NULL;
+}
+
+
 /* Init the datastructures for later use by the p2m code */
 int p2m_init(struct domain *d);
 
@@ -470,12 +565,10 @@ static inline int guest_physmap_add_page(struct domain *d,
 }
 
 /* Remove a page from a domain's p2m table */
-static inline void guest_physmap_remove_page(struct domain *d,
+int __must_check
+guest_physmap_remove_page(struct domain *d,
                                unsigned long gfn,
-                               unsigned long mfn, unsigned int page_order)
-{
-    guest_physmap_remove_entry(d->arch.p2m, gfn, mfn, page_order);
-}
+                          unsigned long mfn, unsigned int page_order);
 
 /* Change types across all p2m entries in a domain */
 void p2m_change_type_global(struct p2m_domain *p2m, p2m_type_t ot, p2m_type_t nt);

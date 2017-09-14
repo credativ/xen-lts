@@ -217,6 +217,7 @@ struct domain
     struct page_list_head page_list;  /* linked list */
     struct page_list_head xenpage_list; /* linked list (size xenheap_pages) */
     unsigned int     tot_pages;       /* number of pages currently possesed */
+    unsigned int     outstanding_pages; /* pages claimed but not possessed  */
     unsigned int     max_pages;       /* maximum value for tot_pages        */
     atomic_t         shr_pages;       /* number of shared pages             */
     unsigned int     xenheap_pages;   /* # pages allocated from Xen heap    */
@@ -432,6 +433,11 @@ struct domain *domain_create(
  * The returned domain reference must be discarded using rcu_unlock_domain().
  */
 struct domain *rcu_lock_domain_by_id(domid_t dom);
+
+/*
+ * As above function, but resolves DOMID_SELF to current domain
+ */
+struct domain *rcu_lock_domain_by_any_id(domid_t dom);
 
 /*
  * As above function, but accounts for current domain context:

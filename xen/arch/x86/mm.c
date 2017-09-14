@@ -4340,6 +4340,7 @@ static int replace_grant_p2m_mapping(
     p2m_type_t type;
     mfn_t old_mfn;
     struct domain *d = current->domain;
+    int rc;
 
     if ( new_addr != 0 || (flags & GNTMAP_contains_pte) )
         return GNTST_general_error;
@@ -4352,8 +4353,11 @@ static int replace_grant_p2m_mapping(
                  type, mfn_x(old_mfn), frame);
         return GNTST_general_error;
     }
-    guest_physmap_remove_page(d, gfn, frame, 0);
+    rc = guest_physmap_remove_page(d, gfn, frame, 0);
 
+    if (rc)
+        return rc;
+    
     return GNTST_okay;
 }
 
@@ -4938,7 +4942,7 @@ long arch_memory_op(int op, XEN_GUEST_HANDLE(void) arg)
             else
             {
                 if ( (xatp.idx >= nr_grant_frames(d->grant_table)) &&
-                     (xatp.idx < max_nr_grant_frames) )
+                     (xatp.idx < DEFAULT_MAX_NR_GRANT_FRAMES) )
                     gnttab_grow_table(d, xatp.idx + 1);
 
                 if ( xatp.idx < nr_grant_frames(d->grant_table) )
@@ -4987,8 +4991,12 @@ long arch_memory_op(int op, XEN_GUEST_HANDLE(void) arg)
         if ( mfn_valid(prev_mfn) )
         {
             if ( is_xen_heap_mfn(prev_mfn) )
+            {
                 /* Xen heap frames are simply unhooked from this phys slot. */
-                guest_physmap_remove_page(d, xatp.gpfn, prev_mfn, 0);
+                rc = guest_physmap_remove_page(d, xatp.gpfn, prev_mfn, 0);
+                if (rc)
+                    goto out;
+            }
             else
                 /* Normal domain memory is freed, to avoid leaking memory. */
                 guest_remove_page(d, xatp.gpfn);
@@ -4998,11 +5006,16 @@ long arch_memory_op(int op, XEN_GUEST_HANDLE(void) arg)
         gpfn = get_gpfn_from_mfn(mfn);
         ASSERT( gpfn != SHARED_M2P_ENTRY );
         if ( gpfn != INVALID_M2P_ENTRY )
-            guest_physmap_remove_page(d, gpfn, mfn, 0);
+        {
+            rc = guest_physmap_remove_page(d, gpfn, mfn, 0);
+            if (rc)
+                goto out;
+        }
 
         /* Map at new location. */
         rc = guest_physmap_add_page(d, xatp.gpfn, mfn, 0);
 
+    out:
         domain_unlock(d);
 
         rcu_unlock_domain(d);

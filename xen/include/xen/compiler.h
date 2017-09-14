@@ -63,4 +63,6 @@
  */
 #define uninitialized_var(x) x = x
 
+#define __must_check __attribute__((warn_unused_result))
+
 #endif /* __LINUX_COMPILER_H */

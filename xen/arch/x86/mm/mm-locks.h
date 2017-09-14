@@ -28,6 +28,8 @@
 
 /* Per-CPU variable for enforcing the lock ordering */
 DECLARE_PER_CPU(int, mm_lock_level);
+#define __get_lock_level()  (this_cpu(mm_lock_level))
+
 
 static inline void mm_lock_init(mm_lock_t *l)
 {
@@ -41,6 +43,25 @@ static inline int mm_locked_by_me(mm_lock_t *l)
 {
     return (l->lock.recurse_cpu == current->processor);
 }
+
+/* If you see this crash, the numbers printed are lines in this file 
+ * where the offending locks are declared. */
+#define __check_lock_level(l)                           \
+do {                                                    \
+    if ( unlikely(__get_lock_level() > (l)) )           \
+    {                                                   \
+        printk("mm locking order violation: %i > %i\n", \
+               __get_lock_level(), (l));                \
+        BUG();                                          \
+    }                                                   \
+} while(0)
+
+#define __set_lock_level(l)         \
+do {                                \
+    __get_lock_level() = (l);       \
+} while(0)
+
+
 
 static inline void _mm_lock(mm_lock_t *l, const char *func, int level, int rec)
 {
@@ -113,6 +134,9 @@ declare_mm_lock(p2m)
 #define p2m_lock_recursive(p) mm_lock_recursive(p2m, &(p)->lock)
 #define p2m_unlock(p)         mm_unlock(&(p)->lock)
 #define p2m_locked_by_me(p)   mm_locked_by_me(&(p)->lock)
+#define gfn_lock(p,g,o)       p2m_lock(p)
+#define gfn_unlock(p,g,o)     p2m_unlock(p)
+
 
 /* Paging lock (per-domain)
  *
@@ -136,4 +160,46 @@ declare_mm_lock(paging)
 #define paging_unlock(d)       mm_unlock(&(d)->arch.paging.lock)
 #define paging_locked_by_me(d) mm_locked_by_me(&(d)->arch.paging.lock)
 
+
+static inline void mm_write_unlock(mm_rwlock_t *l)
+{
+    if ( --(l->recurse_count) != 0 )
+        return;
+    l->locker = -1;
+    l->locker_function = "nobody";
+    __set_lock_level(l->unlock_level);
+    write_unlock(&l->lock);
+}
+   
+static inline void _mm_read_lock(mm_rwlock_t *l, int level)
+{
+    __check_lock_level(level);
+    read_lock(&l->lock);
+    /* There's nowhere to store the per-CPU unlock level so we can't
+     * set the lock level. */
+}
+
+static inline void mm_read_unlock(mm_rwlock_t *l)
+{
+    read_unlock(&l->lock);
+}
+
+/* This wrapper uses the line number to express the locking order below */
+#define declare_mm_lock(name)                                                 \
+    static inline void mm_lock_##name(mm_lock_t *l, const char *func, int rec)\
+    { _mm_lock(l, func, __LINE__, rec); }
+#define declare_mm_rwlock(name)                                               \
+    static inline void mm_write_lock_##name(mm_rwlock_t *l, const char *func) \
+    { _mm_write_lock(l, func, __LINE__); }                                    \
+    static inline void mm_read_lock_##name(mm_rwlock_t *l)                    \
+    { _mm_read_lock(l, __LINE__); }
+/* These capture the name of the calling function */
+#define mm_lock(name, l) mm_lock_##name(l, __func__, 0)
+#define mm_lock_recursive(name, l) mm_lock_##name(l, __func__, 1)
+#define mm_write_lock(name, l) mm_write_lock_##name(l, __func__)
+#define mm_read_lock(name, l) mm_read_lock_##name(l)
+
+
+
+     
 #endif /* _MM_LOCKS_H */

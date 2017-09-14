@@ -117,6 +117,13 @@ struct grant_entry_v1 {
 };
 typedef struct grant_entry_v1 grant_entry_v1_t;
 
+/* The first few grant table entries will be preserved across grant table
+ * version changes and may be pre-populated at domain creation by tools.
+ */
+#define GNTTAB_NR_RESERVED_ENTRIES     8
+#define GNTTAB_RESERVED_CONSOLE        0
+#define GNTTAB_RESERVED_XENSTORE       1
+
 /*
  * Type of grant entry.
  *  GTF_invalid: This grant entry grants no privileges.
@@ -511,6 +518,38 @@ struct gnttab_get_version {
 typedef struct gnttab_get_version gnttab_get_version_t;
 DEFINE_XEN_GUEST_HANDLE(gnttab_get_version_t);
 
+/*
+ * Issue one or more cache maintenance operations on a portion of a
+ * page granted to the calling domain by a foreign domain.
+ */
+struct gnttab_cache_flush {
+    union {
+        uint64_t dev_bus_addr;
+        grant_ref_t ref;
+    } a;
+    uint16_t offset; /* offset from start of grant */
+    uint16_t length; /* size within the grant */
+#define GNTTAB_CACHE_CLEAN          (1<<0)
+#define GNTTAB_CACHE_INVAL          (1<<1)
+#define GNTTAB_CACHE_SOURCE_GREF    (1<<31)
+    uint32_t op;
+};
+typedef struct gnttab_cache_flush gnttab_cache_flush_t;
+DEFINE_XEN_GUEST_HANDLE(gnttab_cache_flush_t);
+
+/*
+ * GNTTABOP_swap_grant_ref: Swap the contents of two grant entries.
+ */
+struct gnttab_swap_grant_ref {
+    /* IN parameters */
+    grant_ref_t ref_a;
+    grant_ref_t ref_b;
+    /* OUT parameters */
+    int16_t status;             /* => enum grant_status */
+};
+typedef struct gnttab_swap_grant_ref gnttab_swap_grant_ref_t;
+DEFINE_XEN_GUEST_HANDLE(gnttab_swap_grant_ref_t);
+
 #endif /* __XEN_INTERFACE_VERSION__ */
 
 /*
@@ -583,6 +622,25 @@ DEFINE_XEN_GUEST_HANDLE(gnttab_get_version_t);
     "page address size too large",              \
     "could not map at the moment, retry"        \
 }
+
+/* ` enum grant_table_op { // GNTTABOP_* => struct gnttab_* */
+#define GNTTABOP_map_grant_ref        0
+#define GNTTABOP_unmap_grant_ref      1
+#define GNTTABOP_setup_table          2
+#define GNTTABOP_dump_table           3
+#define GNTTABOP_transfer             4
+#define GNTTABOP_copy                 5
+#define GNTTABOP_query_size           6
+#define GNTTABOP_unmap_and_replace    7
+#if __XEN_INTERFACE_VERSION__ >= 0x0003020a
+#define GNTTABOP_set_version          8
+#define GNTTABOP_get_status_frames    9
+#define GNTTABOP_get_version          10
+#define GNTTABOP_swap_grant_ref       11
+#define GNTTABOP_cache_flush          12
+#endif /* __XEN_INTERFACE_VERSION__ */
+/* ` } */
+
 
 #endif /* __XEN_PUBLIC_GRANT_TABLE_H__ */
 

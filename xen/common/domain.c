@@ -454,6 +454,14 @@ int rcu_lock_remote_target_domain_by_id(domid_t dom, struct domain **d)
     return 0;
 }
 
+struct domain *rcu_lock_domain_by_any_id(domid_t dom)
+{
+    if ( dom == DOMID_SELF )
+        return rcu_lock_current_domain();
+    return rcu_lock_domain_by_id(dom);
+}
+
+
 int domain_kill(struct domain *d)
 {
     int rc = 0;
