@@ -341,6 +341,12 @@ static long memory_exchange(XEN_GUEST_HANDLE(xen_memory_exchange_t) arg)
         }
     }
 
+    if ( unlikely(!propagate_node(exch.out.mem_flags, &memflags)) )
+    {
+        rc = -EINVAL;
+        goto fail_early;
+    }
+    
     rc = rcu_lock_target_domain_by_id(exch.in.domid, &d);
     if ( rc )
         goto fail_early;
@@ -349,7 +355,6 @@ static long memory_exchange(XEN_GUEST_HANDLE(xen_memory_exchange_t) arg)
         d,
         XENMEMF_get_address_bits(exch.out.mem_flags) ? :
         (BITS_PER_LONG+PAGE_SHIFT)));
-    memflags |= MEMF_node(XENMEMF_get_node(exch.out.mem_flags));
 
     for ( i = (exch.nr_exchanged >> in_chunk_order);
           i < (exch.in.nr_extents >> in_chunk_order);
@@ -571,9 +576,8 @@ long do_memory_op(unsigned long cmd, XEN_GUEST_HANDLE(void) arg)
             args.memflags = MEMF_bits(address_bits);
         }
 
-        args.memflags |= MEMF_node(XENMEMF_get_node(reservation.mem_flags));
-        if ( reservation.mem_flags & XENMEMF_exact_node_request )
-            args.memflags |= MEMF_exact_node;
+        if ( unlikely(!propagate_node(reservation.mem_flags, &args.memflags)) )
+            return -EINVAL;
 
         if ( op == XENMEM_populate_physmap
              && (reservation.mem_flags & XENMEMF_populate_on_demand) )
