@@ -178,7 +178,7 @@ int guest_remove_page(struct domain *d, unsigned long gmfn)
     {
         gdprintk(XENLOG_INFO, "Domain %u page number %lx invalid\n",
                 d->domain_id, gmfn);
-        return 1;
+        return -EINVAL;
     }
             
     page = mfn_to_page(mfn);
@@ -196,7 +196,7 @@ int guest_remove_page(struct domain *d, unsigned long gmfn)
     if ( unlikely(!get_page(page, d)) )
     {
         gdprintk(XENLOG_INFO, "Bad page free for domain %u\n", d->domain_id);
-        return 1;
+        return -ENXIO;
     }
 
     if ( test_and_clear_bit(_PGT_pinned, &page->u.inuse.type_info) )

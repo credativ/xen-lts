@@ -325,6 +325,7 @@ page_list_splice(struct page_list_head *list, struct page_list_head *head)
 
 void scrub_one_page(struct page_info *);
 
+/* Returns 0 on success, or negative on error. */
 int guest_remove_page(struct domain *d, unsigned long gmfn);
 
 #define RAM_TYPE_CONVENTIONAL 0x00000001
