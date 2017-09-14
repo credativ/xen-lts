@@ -185,11 +185,11 @@ static int destroy_domain(void *_domain)
 static void domain_cleanup(void)
 {
 	xc_dominfo_t dominfo;
-	struct domain *domain;
+	struct domain *domain, *tmp;
 	int notify = 0;
 
 again:
-	list_for_each_entry_safe(domain, &domains, list) {
+	list_for_each_entry_safe(domain, tmp, &domains, list) {
 		if (xc_domain_getinfo(*xc_handle, domain->domid, 1,
 				      &dominfo) == 1 &&
 		    dominfo.domid == domain->domid) {
