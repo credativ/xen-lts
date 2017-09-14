@@ -2637,7 +2637,7 @@ static int __gnttab_cache_flush(gnttab_cache_flush_t *cflush,
     if ( (cflush->offset >= PAGE_SIZE) ||
          (cflush->length > PAGE_SIZE) ||
          (cflush->offset + cflush->length > PAGE_SIZE) )
-        return -EINVAL;
+        return -EINVAL; 
 
     if ( cflush->length == 0 || cflush->op == 0 )
         return 0;
@@ -2660,7 +2660,7 @@ static int __gnttab_cache_flush(gnttab_cache_flush_t *cflush,
 
     page = mfn_to_page(mfn);
     owner = page_get_owner_and_reference(page);
-    if ( !owner )
+    if ( !owner || !owner->grant_table )
     {
         rcu_unlock_domain(d);
         return -EPERM;
