@@ -199,10 +199,12 @@ int guest_remove_page(struct domain *d, unsigned long gmfn)
         return -ENXIO;
     }
 
-    if ( test_and_clear_bit(_PGT_pinned, &page->u.inuse.type_info) )
+    rc = guest_physmap_remove_page(d, gmfn, mfn, 0);
+    
+    if ( !rc && test_and_clear_bit(_PGT_pinned, &page->u.inuse.type_info) )
         put_page_and_type(page);
             
-    if ( test_and_clear_bit(_PGC_allocated, &page->count_info) )
+    if ( !rc && test_and_clear_bit(_PGC_allocated, &page->count_info) )
         put_page(page);
 
     rc = guest_physmap_remove_page(d, gmfn, mfn, 0);
@@ -434,7 +436,8 @@ static long memory_exchange(XEN_GUEST_HANDLE(xen_memory_exchange_t) arg)
             gfn = mfn_to_gmfn(d, mfn);
             /* Pages were unshared above */
             BUG_ON(SHARED_M2P(gfn));
-            rc = guest_physmap_remove_page(d, gfn, mfn, 0);
+            if ( guest_physmap_remove_page(d, gfn, mfn, 0) )
+                domain_crash(d);
             put_page(page);
         }
 
