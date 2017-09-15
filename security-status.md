@@ -157,3 +157,23 @@
 | XSA-214  | fixed |
 | XSA-215  | fixed |
 | CVE-2017-7995 | fixed |
+| XSA-216  | not applicable (Linux, qemu) |
+| XSA-217  | fixed |
+| XSA-218  | fixed |
+| XSA-219  | fixed |
+| XSA-220  | not affected (4.5) |
+| XSA-221  | not affected (4.4) |
+| XSA-222  | fixed |
+| XSA-223  | not affected (ARM) |
+| XSA-224  | fixed |
+| XSA-225  | not affected (4.6) |
+| XSA-226  | fixed |
+| XSA-227  | fixed |
+| XSA-228  | not affected (4.6) |
+| XSA-229  | not applicable (Linux) |
+| XSA-230  | fixed |
+| XSA-231  | fixed |
+| XSA-232  | fixed |
+| XSA-233  | fixed |
+| XSA-234  | fixed |
+| XSA-235  | not affected (4.4) |
