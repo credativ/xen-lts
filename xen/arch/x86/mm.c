@@ -4300,13 +4300,22 @@ static int replace_grant_va_mapping(
 
     if ( unlikely((l1e_get_flags(ol1e) ^ grant_pte_flags) &
                   ~(_PAGE_AVAIL | PAGE_CACHE_ATTRS)) )
+#ifdef __i386__
+        MEM_LOG("PTE flags %x for %"PRIx64" don't match grant (%x)",
+                l1e_get_flags(ol1e), (long long unsigned)addr, grant_pte_flags);        
+#else
         MEM_LOG("PTE flags %x for %"PRIx64" don't match grant (%x)",
                 l1e_get_flags(ol1e), addr, grant_pte_flags);
-
+#endif
+    
     /* Delete pagetable entry. */
     if ( unlikely(!UPDATE_ENTRY(l1, pl1e, ol1e, nl1e, gl1mfn, v, 0)) )
     {
+#ifdef __i386__
+        MEM_LOG("Cannot delete PTE entry for %"PRIx64, (long long unsigned)addr);
+#else
         MEM_LOG("Cannot delete PTE entry for %"PRIx64, addr);
+#endif
         rc = GNTST_general_error;
         goto unlock_and_out;
     }
