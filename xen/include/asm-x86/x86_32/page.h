@@ -126,6 +126,12 @@ extern unsigned int PAGE_HYPERVISOR_NOCACHE;
 #define put_pte_flags(x) (((intpte_t)((x) & ~0xFFF) << 32) | ((x) & 0xFFF))
 
 /*
+ * Bit 12 of a 24-bit flag mask. This corresponds to bit 52 of a pte.
+ * This is needed to distinguish between user and kernel PTEs since _PAGE_USER
+ * is asserted for both.
+ */
+#define _PAGE_GUEST_KERNEL (1U<<12)
+/*
  * Disallow unused flag bits plus PAT/PSE, PCD, PWT and GLOBAL.
  * Permit the NX bit if the hardware supports it.
  */
