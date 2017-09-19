@@ -329,6 +329,7 @@ static int initialize_set(fd_set *inset, fd_set *outset, int sock, int ro_sock,
 		set_fd(xc_evtchn_fd(xce_handle), inset, &max);
 
 	wrl_gettime_now(&now);
+	wrl_log_periodic(now);
 	
 	list_for_each_entry(conn, &connections, list) {
 		if (conn->domain) {
