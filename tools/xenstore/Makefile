@@ -18,6 +18,7 @@ XENSTORED_OBJS_$(CONFIG_SunOS) = xenstored_solaris.o xenstored_probes.o
 XENSTORED_OBJS_$(CONFIG_NetBSD) = xenstored_netbsd.o
 
 XENSTORED_OBJS += $(XENSTORED_OBJS_y)
+LDLIBS_xenstored += -lrt
 
 ifneq ($(XENSTORE_STATIC_CLIENTS),y)
 LIBXENSTORE := libxenstore.so
@@ -47,7 +48,7 @@ CFLAGS += -DHAVE_DTRACE=1
 endif
  
 xenstored: $(XENSTORED_OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS_libxenctrl) $(SOCKET_LIBS) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS_libxenctrl) $(LDLIBS_xenstored) $(SOCKET_LIBS) -o $@
 
 $(CLIENTS): xenstore
 	ln -f xenstore $@

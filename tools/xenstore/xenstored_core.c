@@ -313,6 +313,8 @@ static int initialize_set(fd_set *inset, fd_set *outset, int sock, int ro_sock,
 	static struct timeval zero_timeout = { 0 };
 	struct connection *conn;
 	int max = -1;
+	struct wrl_timestampt now;
+	int timeout = -1;
 
 	*ptimeout = NULL;
 
@@ -326,8 +328,11 @@ static int initialize_set(fd_set *inset, fd_set *outset, int sock, int ro_sock,
 	if (xce_handle != NULL)
 		set_fd(xc_evtchn_fd(xce_handle), inset, &max);
 
+	wrl_gettime_now(&now);
+	
 	list_for_each_entry(conn, &connections, list) {
 		if (conn->domain) {
+			wrl_check_timeout(conn->domain, now, &timeout);
 			if (domain_can_read(conn) ||
 			    (domain_can_write(conn) &&
 			     !list_empty(&conn->out_list)))
@@ -339,6 +344,11 @@ static int initialize_set(fd_set *inset, fd_set *outset, int sock, int ro_sock,
 		}
 	}
 
+	*ptimeout = talloc_zero(NULL, struct timeval);
+	
+	(**ptimeout).tv_sec = timeout / 1000;
+        (**ptimeout).tv_usec = (timeout % 1000) * 1000;
+	
 	return max;
 }
 
@@ -905,6 +915,7 @@ static void do_write(struct connection *conn, struct buffered_data *in)
 	}
 
 	add_change_node(conn->transaction, name, false);
+	wrl_apply_debit_direct(conn);
 	fire_watches(conn, name, false);
 	send_ack(conn, XS_WRITE);
 }
@@ -929,6 +940,7 @@ static void do_mkdir(struct connection *conn, const char *name)
 			return;
 		}
 		add_change_node(conn->transaction, name, false);
+		wrl_apply_debit_direct(conn);
 		fire_watches(conn, name, false);
 	}
 	send_ack(conn, XS_MKDIR);
@@ -1054,6 +1066,7 @@ static void do_rm(struct connection *conn, const char *name)
 
 	if (_rm(conn, node, name)) {
 		add_change_node(conn->transaction, name, true);
+		wrl_apply_debit_direct(conn);
 		fire_watches(conn, name, true);
 		send_ack(conn, XS_RM);
 	}
@@ -1129,6 +1142,7 @@ static void do_set_perms(struct connection *conn, struct buffered_data *in)
 	}
 
 	add_change_node(conn->transaction, name, false);
+	wrl_apply_debit_direct(conn);
 	fire_watches(conn, name, false);
 	send_ack(conn, XS_SET_PERMS);
 }
