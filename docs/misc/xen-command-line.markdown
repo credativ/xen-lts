@@ -815,6 +815,21 @@ This option can be specified more than once (up to 8 times at present).
 ### ple\_window
 > `= <integer>`
 
+### pv-linear-pt
+> `= <boolean>`
+
+> Default: `false`
+
+Allow PV guests to have pagetable entries pointing to other pagetables
+of the same level (i.e., allowing L2 PTEs to point to other L2 pages).
+This technique is often called "linear pagetables", and is sometimes
+used to allow operating systems a simple way to consistently map the
+current process's pagetables into its own virtual address space.
+
+None of the most common PV operating systems (Linux, NetBSD, MiniOS)
+use this technique, but there may be custom operating systems which
+do.
+
 ### reboot
 > `= t[riple] | k[bd] | a[cpi] | p[ci] | e[fi] | n[o] [, [w]arm | [c]old]`
 
