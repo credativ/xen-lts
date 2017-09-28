@@ -44,6 +44,33 @@ static inline void atomic_write64(volatile uint64_t *addr, uint64_t val)
 #undef build_atomic_read
 #undef build_atomic_write
 
+void __bad_atomic_size(void);
+
+#define read_atomic(p) ({                                               \
+    typeof(*p) __x;                                                     \
+    switch ( sizeof(*p) ) {                                             \
+    case 1: __x = (typeof(*p))atomic_read8((uint8_t *)p); break;      \
+    case 2: __x = (typeof(*p))atomic_read16((uint16_t *)p); break;    \
+    case 4: __x = (typeof(*p))atomic_read32((uint32_t *)p); break;    \
+    case 8: __x = (typeof(*p))atomic_read64((uint64_t *)p); break;    \
+    default: __x = 0; __bad_atomic_size(); break;                       \
+    }                                                                   \
+    __x;                                                                \
+})
+
+#define write_atomic(p, x) ({                                           \
+    typeof(*p) __x = (x);                                               \
+    switch ( sizeof(*p) ) {                                             \
+    case 1: atomic_write8((uint8_t *)p, (uint8_t)__x); break;         \
+    case 2: atomic_write16((uint16_t *)p, (uint16_t)__x); break;      \
+    case 4: atomic_write32((uint32_t *)p, (uint32_t)__x); break;      \
+    case 8: atomic_write64((uint64_t *)p, (uint64_t)__x); break;      \
+    default: __bad_atomic_size(); break;                                \
+    }                                                                   \
+    __x;                                                                \
+})
+
+
 /*
  * NB. I've pushed the volatile qualifier into the operations. This allows
  * fast accessors such as _atomic_read() and _atomic_set() which don't give
