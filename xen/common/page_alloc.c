@@ -627,7 +627,7 @@ static void free_heap_pages(
         /* If a page has no owner it will need no safety TLB flush. */
         pg[i].u.free.need_tlbflush = (page_get_owner(&pg[i]) != NULL);
         if ( pg[i].u.free.need_tlbflush )
-            pg[i].tlbflush_timestamp = tlbflush_current_time();
+            page_set_tlbflush_timestamp(&pg[i]);
     }
 
     avail[node][zone] += 1 << order;
