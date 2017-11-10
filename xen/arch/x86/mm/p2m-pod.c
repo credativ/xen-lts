@@ -560,10 +560,24 @@ recount:
 
     if ( !nonpod )
     {
-        /* All PoD: Mark the whole region invalid and tell caller
-         * we're done. */
-        set_p2m_entry(p2m, gpfn, _mfn(INVALID_MFN), order, p2m_invalid, p2m->default_access);
-        p2m->pod.entry_count-=(1<<order);
+        /*
+         * All PoD: Mark the whole region invalid and tell caller
+         * we're done.
+         */
+        if ( set_p2m_entry(p2m, gpfn, _mfn(INVALID_MFN), order, p2m_invalid,
+			   p2m->default_access) )
+        {
+            /*
+             * If this fails, we can't tell how much of the range was changed.
+             * Best to crash the domain unless we're sure a partial change is
+             * impossible.
+             */
+            if ( order != 0 )
+                domain_crash(d);
+            goto out_unlock;
+        }
+        p2m->pod.entry_count -= 1UL << order;
+
         BUG_ON(p2m->pod.entry_count < 0);
         ret = 1;
         goto out_entry_check;
@@ -595,7 +609,14 @@ recount:
         mfn = p2m->get_entry(p2m, gpfn + i, &t, &a, 0, NULL);
         if ( t == p2m_populate_on_demand )
         {
-            set_p2m_entry(p2m, gpfn + i, _mfn(INVALID_MFN), 0, p2m_invalid, p2m->default_access);
+            /* This shouldn't be able to fail */
+            if ( set_p2m_entry(p2m, gpfn + i, _mfn(INVALID_MFN), 0,
+                               p2m_invalid, p2m->default_access) )
+            {
+                ASSERT_UNREACHABLE();
+                domain_crash(d);
+                goto out_unlock;
+            }
             p2m->pod.entry_count--;
             BUG_ON(p2m->pod.entry_count < 0);
             pod--;
@@ -608,7 +629,14 @@ recount:
 
             page = mfn_to_page(mfn);
 
-            set_p2m_entry(p2m, gpfn + i, _mfn(INVALID_MFN), 0, p2m_invalid, p2m->default_access);
+            /* This shouldn't be able to fail */
+            if ( set_p2m_entry(p2m, gpfn + i, _mfn(INVALID_MFN), 0,
+                               p2m_invalid, p2m->default_access) )
+            {
+                ASSERT_UNREACHABLE();
+                domain_crash(d);
+                goto out_unlock;
+            }
             set_gpfn_from_mfn(mfn_x(mfn), INVALID_M2P_ENTRY);
 
             p2m_pod_cache_add(p2m, page, 0);
