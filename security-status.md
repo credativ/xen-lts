@@ -177,3 +177,13 @@
 | XSA-233  | fixed |
 | XSA-234  | fixed |
 | XSA-235  | not affected (4.4) |
+| XSA-236  | not affected (4.2) |
+| XSA-237  | UNFIXED |
+| XSA-238  | not affected (4.5) |
+| XSA-239  | fixed |
+| XSA-240  | fixed |
+| XSA-241  | fixed |
+| XSA-242  | fixed |
+| XSA-243  | fixed |
+| XSA-244  | UNFIXED |
+| XSA-245  | not affected (ARM) |
