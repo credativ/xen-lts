@@ -1366,7 +1366,7 @@ p2m_pod_demand_populate(struct p2m_domain *p2m, unsigned long gfn,
     struct page_info *p = NULL; /* Compiler warnings */
     unsigned long gfn_aligned;
     mfn_t mfn;
-    int i;
+    int i, ret;
 
     ASSERT(p2m_locked_by_me(p2m));
 
@@ -1386,10 +1386,10 @@ p2m_pod_demand_populate(struct p2m_domain *p2m, unsigned long gfn,
          * set_p2m_entry() should automatically shatter the 1GB page into 
          * 512 2MB pages. The rest of 511 calls are unnecessary.
          */
-        set_p2m_entry(p2m, gfn_aligned, _mfn(POPULATE_ON_DEMAND_MFN), 9,
-                      p2m_populate_on_demand, p2m->default_access);
+        ret = set_p2m_entry(p2m, gfn_aligned, _mfn(POPULATE_ON_DEMAND_MFN), 9,
+                            p2m_populate_on_demand, p2m->default_access);
         audit_p2m(p2m, 1);
-        return 0;
+        return ret;
     }
 
     pod_eager_reclaim(p2m);
@@ -1422,7 +1422,12 @@ p2m_pod_demand_populate(struct p2m_domain *p2m, unsigned long gfn,
 
     gfn_aligned = (gfn >> order) << order;
 
-    set_p2m_entry(p2m, gfn_aligned, mfn, order, p2m_ram_rw, p2m->default_access);
+    if ( set_p2m_entry(p2m, gfn_aligned, mfn, order, p2m_ram_rw,
+                       p2m->default_access) )
+    {
+        p2m_pod_cache_add(p2m, p, order);
+        goto out_fail;
+    }
 
     for( i = 0; i < (1UL << order); i++ )
     {
@@ -1466,9 +1471,10 @@ remap_and_retry:
 
     /* Remap this 2-meg region in singleton chunks */
     gfn_aligned = (gfn>>order)<<order;
-    for(i=0; i<(1<<order); i++)
-        set_p2m_entry(p2m, gfn_aligned+i, _mfn(POPULATE_ON_DEMAND_MFN), 0,
-                      p2m_populate_on_demand, p2m->default_access);
+    if ( set_p2m_entry(p2m, gfn_aligned, _mfn(INVALID_MFN), PAGE_ORDER_4K,
+                       p2m_populate_on_demand, p2m->default_access) )
+         return -1;
+
     if ( tb_init_done )
     {
         struct {
@@ -1688,7 +1694,7 @@ p2m_gfn_to_mfn(struct p2m_domain *p2m, unsigned long gfn, p2m_type_t *t, p2m_acc
     l1_pgentry_t *l1e;
 
     ASSERT(paging_mode_translate(p2m->domain));
-
+ 
     /* XXX This is for compatibility with the old model, where anything not 
      * XXX marked as RAM was considered to be emulated MMIO space.
      * XXX Once we start explicitly registering MMIO regions in the p2m 
@@ -2056,7 +2062,7 @@ int set_p2m_entry(struct p2m_domain *p2m, unsigned long gfn, mfn_t mfn,
     struct domain *d = p2m->domain;
     unsigned long todo = 1ul << page_order;
     unsigned int order;
-    int rc = 1;
+    int set_rc, rc = 1;
 
     while ( todo )
     {
@@ -2068,8 +2074,10 @@ int set_p2m_entry(struct p2m_domain *p2m, unsigned long gfn, mfn_t mfn,
         else
             order = 0;
 
-        if ( !p2m->set_entry(p2m, gfn, mfn, order, p2mt, p2ma) )
-            rc = 0;
+        set_rc = p2m->set_entry(p2m, gfn, mfn, order, p2mt, p2ma);
+        if ( set_rc )
+            rc = set_rc;
+        
         gfn += 1ul << order;
         if ( mfn_x(mfn) != INVALID_MFN )
             mfn = _mfn(mfn_x(mfn) + (1ul << order));
