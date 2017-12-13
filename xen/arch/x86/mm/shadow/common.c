@@ -1644,32 +1644,29 @@ shadow_alloc_p2m_page(struct domain *d)
     pg = mfn_to_page(shadow_alloc(d, SH_type_p2m_table, 0));
     d->arch.paging.shadow.p2m_pages++;
     d->arch.paging.shadow.total_pages--;
+    ASSERT(!page_get_owner(pg) && !(pg->count_info & PGC_count_mask));
 
     paging_unlock(d);
 
-    /* Unlike shadow pages, mark p2m pages as owned by the domain.
-     * Marking the domain as the owner would normally allow the guest to
-     * create mappings of these pages, but these p2m pages will never be
-     * in the domain's guest-physical address space, and so that is not
-     * believed to be a concern. */
-    page_set_owner(pg, d);
-    pg->count_info |= 1;
     return pg;
 }
 
 static void
 shadow_free_p2m_page(struct domain *d, struct page_info *pg)
 {
-    ASSERT(page_get_owner(pg) == d);
-    /* Should have just the one ref we gave it in alloc_p2m_page() */
-    if ( (pg->count_info & PGC_count_mask) != 1 )
+    struct domain *owner = page_get_owner(pg);
+
+    /* Should still have no owner and count zero. */
+    if ( owner || (pg->count_info & PGC_count_mask) )
     {
-        SHADOW_ERROR("Odd p2m page count c=%#lx t=%"PRtype_info"\n",
+        SHADOW_ERROR("d%d: Odd p2m page %"PRI_mfn" d=%d c=%lx t=%"PRtype_info"\n",
+                     d->domain_id, mfn_x(page_to_mfn(pg)),
+                     owner ? owner->domain_id : DOMID_INVALID,
                      pg->count_info, pg->u.inuse.type_info);
+        pg->count_info &= ~PGC_count_mask;
+        page_set_owner(pg, NULL);
     }
-    pg->count_info &= ~PGC_count_mask;
     pg->u.sh.type = SH_type_p2m_table; /* p2m code reuses type-info */
-    page_set_owner(pg, NULL); 
 
     /* This is called both from the p2m code (which never holds the 
      * paging lock) and the log-dirty code (which sometimes does). */
@@ -3158,7 +3155,11 @@ int shadow_enable(struct domain *d, u32 mode)
     if ( rv != 0 && !pagetable_is_null(p2m_get_pagetable(p2m)) )
         p2m_teardown(p2m);
     if ( rv != 0 && pg != NULL )
+    {
+        pg->count_info &= ~PGC_count_mask;
+        page_set_owner(pg, NULL);
         shadow_free_p2m_page(d, pg);
+    }
     domain_unpause(d);
     return rv;
 }
@@ -3274,8 +3275,23 @@ void shadow_teardown(struct domain *d)
     paging_unlock(d);
 
     /* Must be called outside the lock */
-    if ( unpaged_pagetable ) 
+    if ( unpaged_pagetable )
+    {
+        if ( page_get_owner(unpaged_pagetable) == d &&
+             (unpaged_pagetable->count_info & PGC_count_mask) == 1 )
+        {
+            unpaged_pagetable->count_info &= ~PGC_count_mask;
+            page_set_owner(unpaged_pagetable, NULL);
+        }
+        /* Complain here in cases where shadow_free_p2m_page() won't. */
+        else if ( !page_get_owner(unpaged_pagetable) &&
+                  !(unpaged_pagetable->count_info & PGC_count_mask) )
+            SHADOW_ERROR("d%d: Odd unpaged pt %"PRI_mfn" c=%lx t=%"PRtype_info"\n",
+                         d->domain_id, mfn_x(page_to_mfn(unpaged_pagetable)),
+                         unpaged_pagetable->count_info,
+                         unpaged_pagetable->u.inuse.type_info);       
         shadow_free_p2m_page(d, unpaged_pagetable);
+    }
 }
 
 void shadow_final_teardown(struct domain *d)
