@@ -187,3 +187,9 @@
 | XSA-243  | fixed |
 | XSA-244  | UNFIXED |
 | XSA-245  | not affected (ARM) |
+| XSA-246  | fixed |
+| XSA-247  | fixed |
+| XSA-248  | fixed |
+| XSA-249  | fixed |
+| XSA-250  | fixed |
+| XSA-251  | fixed |
