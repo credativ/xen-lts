@@ -193,3 +193,5 @@
 | XSA-249  | fixed |
 | XSA-250  | fixed |
 | XSA-251  | fixed |
+| XSA-253  | not affected (4.10) |
+| XSA-254  | no fix available yet |
