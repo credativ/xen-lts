@@ -139,7 +139,7 @@
 | XSA-196  | ?? |
 | XSA-197  | fixed |
 | XSA-198  | fixed |
-| XSA-199  | ?? |
+| XSA-199  | fixed |
 | XSA-200  | fixed |
 | XSA-201  | ?? |
 | XSA-202  | fixed |
@@ -149,9 +149,9 @@
 | XSA-206  | ?? |
 | XSA-207  | ?? |
 | XSA-208  | ?? |
-| XSA-209  | ?? |
+| XSA-209  | fixed |
 | XSA-210  | ?? |
-| XSA-211  | ?? |
+| XSA-211  | fixed |
 | XSA-212  | ?? |
 | XSA-213  | fixed |
 | XSA-214  | fixed |
@@ -178,14 +178,14 @@
 | XSA-234  | fixed |
 | XSA-235  | not affected (4.4) |
 | XSA-236  | not affected (4.2) |
-| XSA-237  | UNFIXED |
+| XSA-237  | won't fix (too intrusive) |
 | XSA-238  | not affected (4.5) |
 | XSA-239  | fixed |
 | XSA-240  | fixed |
 | XSA-241  | fixed |
 | XSA-242  | fixed |
 | XSA-243  | fixed |
-| XSA-244  | UNFIXED |
+| XSA-244  | won't fix (minor issue) |
 | XSA-245  | not affected (ARM) |
 | XSA-246  | fixed |
 | XSA-247  | fixed |
