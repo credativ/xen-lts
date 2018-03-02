@@ -33,10 +33,6 @@
 #error GUEST_PAGING_LEVELS not defined
 #endif
 
-/* Type of the guest's frame numbers */
-TYPE_SAFE(unsigned long,gfn)
-#define PRI_gfn "05lx"
-
 #define VALID_GFN(m) (m != INVALID_GFN)
 
 static inline int
