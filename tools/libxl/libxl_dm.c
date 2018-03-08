@@ -346,18 +346,6 @@ static char ** libxl__build_device_model_args_old(libxl__gc *gc,
     return (char **) flexarray_contents(dm_args);
 }
 
-static const char *qemu_disk_format_string(libxl_disk_format format)
-{
-    switch (format) {
-    case LIBXL_DISK_FORMAT_QCOW: return "qcow";
-    case LIBXL_DISK_FORMAT_QCOW2: return "qcow2";
-    case LIBXL_DISK_FORMAT_VHD: return "vpc";
-    case LIBXL_DISK_FORMAT_RAW: return "raw";
-    case LIBXL_DISK_FORMAT_EMPTY: return NULL;
-    default: return NULL;
-    }
-}
-
 static char *dm_spice_options(libxl__gc *gc,
                                     const libxl_spice_info *spice)
 {
@@ -710,7 +698,7 @@ static char ** libxl__build_device_model_args_new(libxl__gc *gc,
             int disk, part;
             int dev_number =
                 libxl__device_disk_dev_number(disks[i].vdev, &disk, &part);
-            const char *format = qemu_disk_format_string(disks[i].format);
+            const char *format;
             char *drive;
 
             if (dev_number == -1) {
@@ -719,6 +707,11 @@ static char ** libxl__build_device_model_args_new(libxl__gc *gc,
                 continue;
             }
 
+            if (disks[i].backend == LIBXL_DISK_BACKEND_QDISK)
+                format = libxl__qemu_disk_format_string(disks[i].format);
+            else 
+                format = libxl__qemu_disk_format_string(LIBXL_DISK_FORMAT_RAW);
+            
             if (disks[i].is_cdrom) {
                 if (disks[i].format == LIBXL_DISK_FORMAT_EMPTY)
                     drive = libxl__sprintf
