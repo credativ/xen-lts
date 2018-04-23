@@ -104,6 +104,9 @@ struct hvm_intack hvm_vcpu_has_pending_irq(struct vcpu *v);
 struct hvm_intack hvm_vcpu_ack_pending_irq(struct vcpu *v,
                                            struct hvm_intack intack);
 
+/* Assert an IO APIC pin. */
+int hvm_ioapic_assert(struct domain *d, unsigned int gsi, bool_t level);
+
 /*
  * Currently IA64 Xen doesn't support MSI. So for x86, we define this macro
  * to control the conditional compilation of some MSI-related functions.

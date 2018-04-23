@@ -116,6 +116,7 @@ void vmx_intr_assist(void)
     unsigned int tpr_threshold = 0;
     enum hvm_intblk intblk;
 
+
     /* Block event injection when single step with MTF. */
     if ( unlikely(v->arch.hvm_vcpu.single_step) )
     {
@@ -124,7 +125,6 @@ void vmx_intr_assist(void)
         return;
     }
 
-    /* Crank the handle on interrupt state. */
     pt_update_irq(v);
 
     do {
