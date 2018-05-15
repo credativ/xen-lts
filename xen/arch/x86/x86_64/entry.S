@@ -202,7 +202,13 @@ test_all_events:
         leaq  irq_stat(%rip),%rcx
         testl $~0,(%rcx,%rax,1)
         jnz   process_softirqs
-        testb $1,VCPU_mce_pending(%rbx)
+
+        /* Inject exception if pending. */
+        lea   VCPU_trap_bounce(%rbx), %rdx
+        testb $TBF_EXCEPTION, TRAPBOUNCE_flags(%rdx)
+        jnz   .Lprocess_trapbounce
+
+	testb $1,VCPU_mce_pending(%rbx)
         jnz   process_mce
 .Ltest_guest_nmi:
         testb $1,VCPU_nmi_pending(%rbx)
@@ -220,6 +226,15 @@ test_guest_events:
         movq  %rax,TRAPBOUNCE_eip(%rdx)
         movb  $TBF_INTERRUPT,TRAPBOUNCE_flags(%rdx)
         call  create_bounce_frame
+        jmp   test_all_events
+
+        ALIGN
+/* %rbx: struct vcpu, %rdx struct trap_bounce */
+.Lprocess_trapbounce:
+        sti
+.Lbounce_exception:
+        call  create_bounce_frame
+        movb  $0, TRAPBOUNCE_flags(%rdx)
         jmp   test_all_events
 
         ALIGN
@@ -497,15 +512,8 @@ handle_exception_saved:
         callq *(%rdx,%rax,8)
         testb $3,UREGS_cs(%rsp)
         jz    restore_all_xen
-        leaq  VCPU_trap_bounce(%rbx),%rdx
         movq  VCPU_domain(%rbx),%rax
         testb $1,DOMAIN_is_32bit_pv(%rax)
-        jnz   compat_post_handle_exception
-        testb $TBF_EXCEPTION,TRAPBOUNCE_flags(%rdx)
-        jz    test_all_events
-.Lbounce_exception:
-        call  create_bounce_frame
-        movb  $0,TRAPBOUNCE_flags(%rdx)
         jmp   test_all_events
 
 /* No special register assumptions. */
