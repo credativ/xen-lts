@@ -21,6 +21,8 @@
 #define DR_STEP         (0x4000)        /* single-step */
 #define DR_SWITCH       (0x8000)        /* task switch */
 
+#define X86_DR6_DEFAULT 0xffff0ff0ul    /* Default %dr6 value. */
+
 /* Now define a bunch of things for manipulating the control register.
    The top two bytes of the control register consist of 4 fields of 4
    bits - each field corresponds to one of the four debug registers,
