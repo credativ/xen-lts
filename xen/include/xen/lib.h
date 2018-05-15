@@ -80,6 +80,9 @@ extern long vm_assist(struct domain *, unsigned int, unsigned int);
 extern int __printk_ratelimit(int ratelimit_ms, int ratelimit_burst);
 extern int printk_ratelimit(void);
 
+#define gprintk(lvl, fmt, args...)				\
+    printk(XENLOG_GUEST lvl "%pv " fmt, current, ## args)
+
 /* vsprintf.c */
 #define sprintf __xen_has_no_sprintf__
 #define vsprintf __xen_has_no_vsprintf__
