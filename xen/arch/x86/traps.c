@@ -3438,8 +3438,8 @@ void do_debug(struct cpu_user_regs *regs)
          */
         gprintk(XENLOG_WARNING,
                 "Hit #DB in Xen context: %04x:%p [%ps], stk %04x:%p, dr6 %lx\n",
-                regs->cs, _p(regs->rip), _p(regs->rip),
-                regs->ss, _p(regs->rsp), dr6);
+                regs->cs, _p(regs->eip), _p(regs->eip),
+                regs->ss, _p(regs->esp), dr6);
 
         goto out;
     }
