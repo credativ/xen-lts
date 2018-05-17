@@ -74,15 +74,39 @@ void hvm_set_guest_time(struct vcpu *v, u64 guest_time)
 static int pt_irq_vector(struct periodic_time *pt, enum hvm_intsrc src)
 {
     struct vcpu *v = pt->vcpu;
+    unsigned int gsi, isa_irq;
+
+    if ( pt->source == PTSRC_lapic )
+        return pt->irq;
+
+    isa_irq = pt->irq;
+    gsi = hvm_isa_irq_to_gsi(isa_irq);
+
+    if ( src == hvm_intsrc_pic )
+        return (v->domain->arch.hvm_domain.vpic[isa_irq >> 3].irq_base
+                + (isa_irq & 7));
+
+    ASSERT(src == hvm_intsrc_lapic);
+    return domain_vioapic(v->domain)->redirtbl[gsi].fields.vector;
+}
+
+static int pt_irq_masked(struct periodic_time *pt)
+{
+    struct vcpu *v = pt->vcpu;
     unsigned int gsi = pt->irq;
 
     switch ( pt->source )
     {
     case PTSRC_lapic:
-        return pt->irq;
+    {
+        struct vlapic *vlapic = vcpu_vlapic(v);
+
+        return (!vlapic_enabled(vlapic) ||
+                (vlapic_get_reg(vlapic, APIC_LVTT) & APIC_LVT_MASKED));
+    }
 
     case PTSRC_isa:
-      {
+    {
         uint8_t pic_imr = v->domain->arch.hvm_domain.vpic[pt->irq >> 3].imr;
 
         /* Check if the interrupt is unmasked in the PIC. */
@@ -90,37 +114,15 @@ static int pt_irq_vector(struct periodic_time *pt, enum hvm_intsrc src)
             return 0;
 
         gsi = hvm_isa_irq_to_gsi(pt->irq);
-      }
+    }
 
     /* Fallthrough to check if the interrupt is masked on the IO APIC. */
-
     case PTSRC_ioapic:
         return domain_vioapic(v->domain)->redirtbl[gsi].fields.mask;
     }
 
     ASSERT_UNREACHABLE();
     return 1;
-}
-
-static int pt_irq_masked(struct periodic_time *pt)
-{
-    struct vcpu *v = pt->vcpu;
-    unsigned int gsi, isa_irq;
-    uint8_t pic_imr;
-
-    if ( pt->source == PTSRC_lapic )
-    {
-        struct vlapic *vlapic = vcpu_vlapic(v);
-        return (!vlapic_enabled(vlapic) ||
-                (vlapic_get_reg(vlapic, APIC_LVTT) & APIC_LVT_MASKED));
-    }
-
-    isa_irq = pt->irq;
-    gsi = hvm_isa_irq_to_gsi(isa_irq);
-    pic_imr = v->domain->arch.hvm_domain.vpic[isa_irq >> 3].imr;
-
-    return (((pic_imr & (1 << (isa_irq & 7))) || !vlapic_accept_pic_intr(v)) &&
-            domain_vioapic(v->domain)->redirtbl[gsi].fields.mask);
 }
 
 static void pt_lock(struct periodic_time *pt)
@@ -236,7 +238,7 @@ static void pt_timer_fn(void *data)
     pt_unlock(pt);
 }
 
-int pt_update_irq(struct vcpu *v)
+void pt_update_irq(struct vcpu *v)
 {
     struct list_head *head = &v->arch.hvm_vcpu.tm_list;
     struct periodic_time *pt, *temp, *earliest_pt = NULL;
@@ -269,7 +271,7 @@ int pt_update_irq(struct vcpu *v)
     if ( earliest_pt == NULL )
     {
         spin_unlock(&v->arch.hvm_vcpu.tm_lock);
-        return -1;
+        return;
     }
 
     earliest_pt->irq_issued = 1;
@@ -295,7 +297,7 @@ int pt_update_irq(struct vcpu *v)
 
         if ( platform_legacy_irq(irq) && vlapic_accept_pic_intr(v) &&
              v->domain->arch.hvm_domain.vpic[irq >> 3].int_output )
-            return -1;
+            return;
 
         pt_vector = pt_irq_vector(earliest_pt, hvm_intsrc_lapic);
         break;
@@ -308,8 +310,6 @@ int pt_update_irq(struct vcpu *v)
         pt_vector = hvm_ioapic_assert(v->domain, irq, 0);
         break;
     }
-
-    return pt_vector;
 }
 
 static struct periodic_time *is_pt_irq(
