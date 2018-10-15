@@ -10,6 +10,7 @@
 #ifndef __FLUSHTLB_H__
 #define __FLUSHTLB_H__
 
+#include <xen/mm.h>
 #include <xen/config.h>
 #include <xen/percpu.h>
 #include <xen/smp.h>
