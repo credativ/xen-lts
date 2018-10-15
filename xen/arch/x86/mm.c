@@ -2246,7 +2246,7 @@ static int __put_final_page_type(
          */
         if ( !(shadow_mode_enabled(page_get_owner(page)) &&
                (page->count_info & PGC_page_table)) )
-            page->tlbflush_timestamp = tlbflush_current_time();
+            page_set_tlbflush_timestamp(page);
         wmb();
         page->u.inuse.type_info--;
     }
@@ -2256,7 +2256,7 @@ static int __put_final_page_type(
                 (PGT_count_mask|PGT_validated|PGT_partial)) == 1);
         if ( !(shadow_mode_enabled(page_get_owner(page)) &&
                (page->count_info & PGC_page_table)) )
-            page->tlbflush_timestamp = tlbflush_current_time();
+            page_set_tlbflush_timestamp(page);
         wmb();
         page->u.inuse.type_info |= PGT_validated;
     }
@@ -2315,7 +2315,7 @@ static int __put_page_type(struct page_info *page,
              */
             if ( !(shadow_mode_enabled(page_get_owner(page)) &&
                    (page->count_info & PGC_page_table)) )
-                page->tlbflush_timestamp = tlbflush_current_time();
+                page_set_tlbflush_timestamp(page);
         }
 
         if ( likely((y = cmpxchg(&page->u.inuse.type_info, x, nx)) == x) )
