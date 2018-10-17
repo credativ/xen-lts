@@ -310,6 +310,12 @@ static void construct_percpu_idt(unsigned int cpu)
     *(unsigned short *)(&idt_load[0]) = (IDT_ENTRIES*sizeof(idt_entry_t))-1;
     *(unsigned long  *)(&idt_load[2]) = (unsigned long)idt_tables[cpu];
     __asm__ __volatile__ ( "lidt %0" : "=m" (idt_load) );
+
+    set_ist(&idt_tables[cpu][TRAP_double_fault],  IST_DF);
+    set_ist(&idt_tables[cpu][TRAP_nmi],	      IST_NMI);
+    set_ist(&idt_tables[cpu][TRAP_machine_check], IST_MCE);
+    set_ist(&idt_tables[cpu][TRAP_debug],         IST_DB);
+
 }
 
 void start_secondary(void *unused)
@@ -682,6 +688,9 @@ static int cpu_smpboot_alloc(unsigned int cpu)
     if ( idt_tables[cpu] == NULL )
         goto oom;
     memcpy(idt_tables[cpu], idt_table, IDT_ENTRIES * sizeof(idt_entry_t));
+    set_ist(&idt_tables[cpu][TRAP_double_fault],  IST_NONE);
+    set_ist(&idt_tables[cpu][TRAP_nmi],           IST_NONE);
+    set_ist(&idt_tables[cpu][TRAP_machine_check], IST_NONE);
 
     if ( zalloc_cpumask_var(&per_cpu(cpu_sibling_mask, cpu)) &&
          zalloc_cpumask_var(&per_cpu(cpu_core_mask, cpu)) )
