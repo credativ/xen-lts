@@ -1044,9 +1044,8 @@ p2m_pod_demand_populate(struct p2m_domain *p2m, unsigned long gfn,
          * NOTE: In a fine-grained p2m locking scenario this operation
          * may need to promote its locking from gfn->1g superpage
          */
-        set_p2m_entry(p2m, gfn_aligned, _mfn(0), PAGE_ORDER_2M,
-                      p2m_populate_on_demand, p2m->default_access);
-        return 0;
+        return set_p2m_entry(p2m, gfn_aligned, _mfn(INVALID_MFN), PAGE_ORDER_2M,
+                             p2m_populate_on_demand, p2m->default_access);
     }
 
     pod_eager_reclaim(p2m);
@@ -1075,7 +1074,12 @@ p2m_pod_demand_populate(struct p2m_domain *p2m, unsigned long gfn,
 
     gfn_aligned = (gfn >> order) << order;
 
-    set_p2m_entry(p2m, gfn_aligned, mfn, order, p2m_ram_rw, p2m->default_access);
+    if ( set_p2m_entry(p2m, gfn_aligned, mfn, order, p2m_ram_rw,
+                       p2m->default_access) )
+    {
+        p2m_pod_cache_add(p2m, p, order);
+        goto out_fail;
+    }
 
     for( i = 0; i < (1UL << order); i++ )
     {
@@ -1120,13 +1124,18 @@ remap_and_retry:
     BUG_ON(order != PAGE_ORDER_2M);
     pod_unlock(p2m);
 
-    /* Remap this 2-meg region in singleton chunks */
-    /* NOTE: In a p2m fine-grained lock scenario this might
-     * need promoting the gfn lock from gfn->2M superpage */
+    /*
+     * Remap this 2-meg region in singleton chunks. See the comment on the
+     * 1G page splitting path above for why a single call suffices.
+     *
+     * NOTE: In a p2m fine-grained lock scenario this might
+     * need promoting the gfn lock from gfn->2M superpage.
+     */
     gfn_aligned = (gfn>>order)<<order;
-    for(i=0; i<(1<<order); i++)
-        set_p2m_entry(p2m, gfn_aligned+i, _mfn(0), PAGE_ORDER_4K,
-                      p2m_populate_on_demand, p2m->default_access);
+    if ( set_p2m_entry(p2m, gfn_aligned, _mfn(INVALID_MFN), PAGE_ORDER_4K,
+                       p2m_populate_on_demand, p2m->default_access) )
+        return -1;
+
     if ( tb_init_done )
     {
         struct {
