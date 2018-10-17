@@ -309,6 +309,7 @@ void efi_update_l4_pgtable(unsigned int l4idx, l4_pgentry_t);
 #define _PAGE_AVAIL    _AC(0xE00,U)
 #define _PAGE_PSE_PAT _AC(0x1000,U)
 #define _PAGE_AVAIL_HIGH (_AC(0x7ff, U) << 12)
+#define _PAGE_NX       (cpu_has_nx ? _PAGE_NX_BIT : 0)
 /* non-architectural flags */
 #define _PAGE_PAGED   0x2000U
 #define _PAGE_SHARED  0x4000U
@@ -325,6 +326,10 @@ void efi_update_l4_pgtable(unsigned int l4idx, l4_pgentry_t);
 #define _PAGE_GNTTAB   0
 #endif
 
+#define __PAGE_HYPERVISOR_RO      (_PAGE_PRESENT | _PAGE_ACCESSED | _PAGE_NX)
+#define __PAGE_HYPERVISOR_RW      (__PAGE_HYPERVISOR_RO | \
+                                   _PAGE_DIRTY | _PAGE_RW)
+#define __PAGE_HYPERVISOR_RX      (_PAGE_PRESENT | _PAGE_ACCESSED)
 #define __PAGE_HYPERVISOR \
     (_PAGE_PRESENT | _PAGE_RW | _PAGE_DIRTY | _PAGE_ACCESSED)
 #define __PAGE_HYPERVISOR_NOCACHE \
