@@ -2425,21 +2425,6 @@ static int _put_page_type(struct page_info *page, bool_t preemptible,
                 break;
             }
 
-            if ( ptpg && PGT_type_equal(x, ptpg->u.inuse.type_info) )
-            {
-                /*
-                 * page_set_tlbflush_timestamp() accesses the same union
-                 * linear_pt_count lives in. Unvalidated page table pages,
-                 * however, should occur during domain destruction only
-                 * anyway.  Updating of linear_pt_count luckily is not
-                 * necessary anymore for a dying domain.
-                 */
-                ASSERT(page_get_owner(page)->is_dying);
-                ASSERT(page->linear_pt_count < 0);
-                ASSERT(ptpg->linear_pt_count > 0);
-                ptpg = NULL;
-            }
-
             /*
              * Record TLB information for flush later. We do not stamp page
              * tables when running in shadow mode:
@@ -2447,7 +2432,8 @@ static int _put_page_type(struct page_info *page, bool_t preemptible,
              *  2. Shadow mode reuses this field for shadowed page tables to
              *     store flags info -- we don't want to conflict with that.
              */
-            if ( !(shadow_mode_enabled(page_get_owner(page)) &&
+            if ( (!ptpg || !PGT_type_equal(x, ptpg->u.inuse.type_info)) &&
+                 !(shadow_mode_enabled(page_get_owner(page)) &&
                    (page->count_info & PGC_page_table)) )
                 page_set_tlbflush_timestamp(page);
         }
