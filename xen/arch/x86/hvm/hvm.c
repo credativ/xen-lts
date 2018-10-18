@@ -349,6 +349,7 @@ void hvm_do_resume(struct vcpu *v)
 {
     ioreq_t *p;
     unsigned int state;
+    unsigned int prev_state = STATE_IOREQ_NONE;
 
     check_wakeup_from_wait();
 
@@ -361,8 +362,18 @@ void hvm_do_resume(struct vcpu *v)
 
     while ( (state = p->state) != STATE_IOREQ_NONE )
     {
-        rmb();
-        switch ( state )
+        smp_rmb();
+
+    recheck:
+        if ( unlikely(state < prev_state) )
+        {
+            gdprintk(XENLOG_ERR, "Weird HVM ioreq state transition %u -> %u\n",
+                     prev_state, state);
+            domain_crash(v->domain);
+            return; /* bail */
+        }
+      
+        switch ( prev_state = state )
         {
         case STATE_IORESP_READY: /* IORESP_READY -> NONE */
             hvm_io_assist(p);
@@ -370,8 +381,10 @@ void hvm_do_resume(struct vcpu *v)
         case STATE_IOREQ_READY:  /* IOREQ_{READY,INPROCESS} -> IORESP_READY */
         case STATE_IOREQ_INPROCESS:
             wait_on_xen_event_channel(v->arch.hvm_vcpu.xen_port,
-                                      p->state != state);
-            break;
+                                      ({ state = p->state;
+                                         smp_rmb();
+                                         state != prev_state; }));
+            goto recheck;
         default:
             gdprintk(XENLOG_ERR, "Weird HVM iorequest state %u\n", state);
             domain_crash(v->domain);
