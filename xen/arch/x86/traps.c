@@ -3313,12 +3313,44 @@ static void ler_enable(void)
 
 void do_debug(struct cpu_user_regs *regs)
 {
+    unsigned long dr6;
     struct vcpu *v = current;
+
+    /* Stash dr6 as early as possible. */
+    dr6 = read_debugreg(6);
 
     DEBUGGER_trap_entry(TRAP_debug, regs);
 
+    /*
+     * At the time of writing (March 2018), on the subject of %dr6:
+     *
+     * The Intel manual says:
+     *   Certain debug exceptions may clear bits 0-3. The remaining contents
+     *   of the DR6 register are never cleared by the processor. To avoid
+     *   confusion in identifying debug exceptions, debug handlers should
+     *   clear the register (except bit 16, which they should set) before
+     *   returning to the interrupted task.
+     *
+     * The AMD manual says:
+     *   Bits 15:13 of the DR6 register are not cleared by the processor and
+     *   must be cleared by software after the contents have been read.
+     *
+     * Some bits are reserved set, some are reserved clear, and some bits
+     * which were previously reserved set are reused and cleared by hardware.
+     * For future compatibility, reset to the default value, which will allow
+     * us to spot any bit being changed by hardware to its non-default value.
+     */
+    write_debugreg(6, X86_DR6_DEFAULT);
+
     if ( !guest_mode(regs) )
     {
+        /*
+         * !!! WARNING !!!
+         *
+         * %dr6 is mostly guest controlled at this point.  Any decsions base
+         * on its value must be crosschecked with non-guest controlled state.
+         */
+
         if ( regs->eflags & X86_EFLAGS_TF )
         {
             /* In SYSENTER entry path we can't zap TF until EFLAGS is saved. */
@@ -3331,32 +3363,68 @@ void do_debug(struct cpu_user_regs *regs)
             }
             if ( !debugger_trap_fatal(TRAP_debug, regs) )
             {
-                WARN_ON(1);
+                WARN();
                 regs->eflags &= ~X86_EFLAGS_TF;
             }
         }
-        else
+
+        /*
+         * Check for fault conditions.  General Detect, and instruction
+         * breakpoints are faults rather than traps, at which point attempting
+         * to ignore and continue will result in a livelock.
+         *
+         * However, on entering the #DB handler, hardware clears %dr7.gd for
+         * us (as confirmed by the earlier %dr6 accesses succeeding), meaning
+         * that a real General Detect exception is restartable.
+         *
+         * PV guests are not permitted to point %dr{0..3} at Xen linear
+         * addresses, and Instruction Breakpoints (being faults) don't get
+         * delayed by a MovSS shadow, so we should never encounter one in
+         * hypervisor context.
+         *
+         * If however we do, safety measures need to be enacted.  Use a big
+         * hammer and clear all debug settings.
+         */
+        if ( dr6 & (DR_TRAP3 | DR_TRAP2 | DR_TRAP1 | DR_TRAP0) )
         {
-            /*
-             * We ignore watchpoints when they trigger within Xen. This may
-             * happen when a buffer is passed to us which previously had a
-             * watchpoint set on it. No need to bump EIP; the only faulting
-             * trap is an instruction breakpoint, which can't happen to us.
-             */
-            WARN_ON(!search_exception_table(regs->eip));
+            unsigned int bp, dr7 = read_debugreg(7);
+
+            for ( bp = 0; bp < 4; ++bp )
+            {
+                if ( (dr6 & (1u << bp)) && /* Breakpoint triggered? */
+                     (dr7 & (3u << (bp * DR_ENABLE_SIZE))) && /* Enabled? */
+                     ((dr7 & (3u << ((bp * DR_CONTROL_SIZE) + /* Insn? */
+                                     DR_CONTROL_SHIFT))) == DR_RW_EXECUTE) )
+                {
+                    ASSERT_UNREACHABLE();
+
+                    printk(XENLOG_ERR
+                           "Hit instruction breakpoint in Xen context\n");
+                    write_debugreg(7, 0);
+                    break;
+                }
+            }
         }
+
+        /*
+         * Whatever caused this #DB should be restartable by this point.  Note
+         * it and continue.  Guests can trigger this in certain corner cases,
+         * so ensure the message is ratelimited.
+         */
+        gprintk(XENLOG_WARNING,
+                "Hit #DB in Xen context: %04x:%p [%ps], stk %04x:%p, dr6 %lx\n",
+                regs->cs, _p(regs->rip), _p(regs->rip),
+                regs->ss, _p(regs->rsp), dr6);
+
         goto out;
     }
 
     /* Save debug status register where guest OS can peek at it */
-    v->arch.debugreg[6] = read_debugreg(6);
+    v->arch.debugreg[6] |= (dr6 & ~X86_DR6_DEFAULT);
+    v->arch.debugreg[6] &= (dr6 | ~X86_DR6_DEFAULT);
 
     ler_enable();
     do_guest_trap(TRAP_debug, regs, 0);
-    return;
-
- out:
-    ler_enable();
     return;
 }
 
