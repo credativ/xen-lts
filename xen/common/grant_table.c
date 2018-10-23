@@ -46,7 +46,11 @@ unsigned int max_nr_grant_frames = DEFAULT_MAX_NR_GRANT_FRAMES;
 integer_param("gnttab_max_nr_frames", max_nr_grant_frames);
 #endif
 
-static unsigned int __read_mostly opt_gnttab_max_version = 2;
+#ifndef GNTTAB_MAX_VERSION
+#define GNTTAB_MAX_VERSION 2
+#endif
+
+static unsigned int __read_mostly opt_gnttab_max_version = GNTTAB_MAX_VERSION;
 static bool_t __read_mostly opt_transitive_grants = 1;
 
 static int __init parse_gnttab(const char *s)
