@@ -391,6 +391,7 @@ void __devinit subarch_percpu_traps_init(void)
         set_ist(&idt_table[TRAP_double_fault],  IST_DF);
         set_ist(&idt_table[TRAP_nmi],           IST_NMI);
         set_ist(&idt_table[TRAP_machine_check], IST_MCE);
+        set_ist(&idt_table[TRAP_debug],         IST_DB);
 
         /*
          * The 32-on-64 hypercall entry vector is only accessible from ring 1.
@@ -416,6 +417,10 @@ void __devinit subarch_percpu_traps_init(void)
 
     /* NMI handler has its own per-CPU 4kB stack. */
     this_cpu(init_tss).ist[IST_NMI-1] = (unsigned long)&stack[IST_NMI * PAGE_SIZE];
+
+    /* Use an interrupt stack table for #DB to prevent the exception being 
+       taken with a guest controlled stack pointer. */
+    this_cpu(init_tss).ist[IST_DB-1] = (unsigned long)&stack[IST_DB  * PAGE_SIZE];
 
     /* Trampoline for SYSCALL entry from long mode. */
     stack = &stack[IST_MAX * PAGE_SIZE]; /* Skip the IST stacks. */

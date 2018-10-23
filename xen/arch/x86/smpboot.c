@@ -691,7 +691,8 @@ static int cpu_smpboot_alloc(unsigned int cpu)
     set_ist(&idt_tables[cpu][TRAP_double_fault],  IST_NONE);
     set_ist(&idt_tables[cpu][TRAP_nmi],           IST_NONE);
     set_ist(&idt_tables[cpu][TRAP_machine_check], IST_NONE);
-
+    set_ist(&idt_tables[cpu][TRAP_debug],         IST_NONE);
+    
     if ( zalloc_cpumask_var(&per_cpu(cpu_sibling_mask, cpu)) &&
          zalloc_cpumask_var(&per_cpu(cpu_core_mask, cpu)) )
         return 0;
