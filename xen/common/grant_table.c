@@ -40,10 +40,47 @@
 #include <xsm/xsm.h>
 #include <asm/flushtlb.h>
 
+
 #ifndef max_nr_grant_frames
 unsigned int max_nr_grant_frames = DEFAULT_MAX_NR_GRANT_FRAMES;
 integer_param("gnttab_max_nr_frames", max_nr_grant_frames);
 #endif
+
+static unsigned int __read_mostly opt_gnttab_max_version = 2;
+static bool_t __read_mostly opt_transitive_grants = 1;
+
+static int __init parse_gnttab(const char *s)
+{
+    const char *ss, *e;
+    int val, rc = 0;
+
+    do {
+        ss = strchr(s, ',');
+        if ( !ss )
+            ss = strchr(s, '\0');
+
+        if ( !strncmp(s, "max-ver:", 8) ||
+             !strncmp(s, "max_ver:", 8) ) /* Alias for original XSA-226 patch */
+        {
+            long ver = simple_strtol(s + 8, &e, 10);
+
+            if ( e == ss && ver >= 1 && ver <= 2 )
+                opt_gnttab_max_version = ver;
+            else
+                rc = -EINVAL;
+        }
+        else if ( (val = parse_boolean("transitive", s, ss)) >= 0 )
+            opt_transitive_grants = val;
+        else
+            rc = -EINVAL;
+
+        s = ss + 1;
+    } while ( *ss );
+
+    return rc;
+}
+custom_param("gnttab", parse_gnttab);
+
 
 /* The maximum number of grant mappings is defined as a multiplier of the
  * maximum number of grant table entries. This defines the multiplier used.
@@ -1973,7 +2010,8 @@ __acquire_grant_for_copy(
 
         rc = __acquire_grant_for_copy(td, trans_gref, rd->domain_id,
                                       readonly, &grant_frame, page,
-                                      &trans_page_off, &trans_length, 0);
+                                      &trans_page_off, &trans_length,
+                                      opt_transitive_grants);
 
         spin_lock(&rgt->lock);
 
@@ -2300,6 +2338,10 @@ gnttab_set_version(XEN_GUEST_HANDLE_PARAM(gnttab_set_version_t) uop)
     if (op.version != 1 && op.version != 2)
         goto out;
 
+    res = -ENOSYS;
+    if ( op.version == 2 && opt_gnttab_max_version == 1 )
+        goto out; /* Behave as before set_version was introduced. */
+
     res = 0;
     if ( gt->gt_version == op.version )
         goto out;
@@ -2385,7 +2427,7 @@ gnttab_set_version(XEN_GUEST_HANDLE_PARAM(gnttab_set_version_t) uop)
     }
 
     if ( op.version < 2 && gt->gt_version == 2 &&
-         (res = gnttab_unpopulate_status_frames(currd, gt)) != 0 )
+         (res = gnttab_unpopulate_status_frames(d, gt)) != 0 )
         goto out_unlock;
 
     /* Make sure there's no crud left over in the table from the
