@@ -3426,6 +3426,10 @@ void do_debug(struct cpu_user_regs *regs)
     ler_enable();
     do_guest_trap(TRAP_debug, regs, 0);
     return;
+
+out:
+    ler_enable();
+    return; 
 }
 
 void do_spurious_interrupt_bug(struct cpu_user_regs *regs)
