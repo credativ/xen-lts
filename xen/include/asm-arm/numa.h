@@ -10,6 +10,12 @@ static inline __attribute__((pure)) int phys_to_nid(paddr_t addr)
     return 0;
 }
 
+/*
+ * TODO: make first_valid_mfn static when NUMA is supported on Arm, this
+ * is required because the dummy helpers are using it.
+ */
+extern unsigned long first_valid_mfn;
+
 /* XXX: implement NUMA support */
 #define node_spanned_pages(nid) (max_page - first_valid_mfn)
 #define node_start_pfn(nid) (first_valid_mfn)
