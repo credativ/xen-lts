@@ -1035,7 +1035,7 @@ int xenmem_add_to_physmap_one(
                                            mfn, 0);
             if ( rc )
             {
-                write_unlock(&d->grant_table->lock);
+                spin_unlock(&d->grant_table->lock);
                 return rc;
             }
         }
