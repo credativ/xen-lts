@@ -396,8 +396,8 @@ struct domain *alloc_domain_struct(void)
 
     clear_page(d);
 
-    d->arch.grant_shared_gfn = xmalloc_array(gfn_t, max_grant_frames);
-    max_status_frames = grant_to_status_frames(max_grant_frames);
+    d->arch.grant_shared_gfn = xmalloc_array(gfn_t, max_nr_grant_frames);
+    max_status_frames = grant_to_status_frames(max_nr_grant_frames);
     d->arch.grant_status_gfn = xmalloc_array(gfn_t, max_status_frames);
     if ( !d->arch.grant_shared_gfn || !d->arch.grant_status_gfn )
     {
@@ -405,7 +405,7 @@ struct domain *alloc_domain_struct(void)
         return NULL;
     }
 
-    for ( i = 0; i < max_grant_frames; ++i )
+    for ( i = 0; i < max_nr_grant_frames; ++i )
         d->arch.grant_shared_gfn[i] = _gfn(INVALID_GFN);
 
     for ( i = 0; i < max_status_frames; ++i )
