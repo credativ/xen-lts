@@ -1,6 +1,6 @@
 /******************************************************************************
  * Arch-specific domctl.c
- * 
+ *
  * Copyright (c) 2002-2006, K A Fraser
  */
 
@@ -38,7 +38,7 @@
 
 static int gdbsx_guest_mem_io(
     domid_t domid, struct xen_domctl_gdbsx_memio *iop)
-{   
+{
     ulong l_uva = (ulong)iop->uva;
     iop->remain = dbg_rw_mem(
         (dbgva_t)iop->gva, (dbgbyte_t *)l_uva, iop->len, domid,
@@ -123,7 +123,7 @@ long arch_do_domctl(
                     break;
                 }
             }
-            
+
             put_page(page);
         }
 
@@ -247,7 +247,7 @@ long arch_do_domctl(
             ret = -ENOMEM;
             break;
         }
- 
+
         ret = 0;
         for ( n = 0; n < num; )
         {
@@ -262,9 +262,9 @@ long arch_do_domctl(
                 ret = -EFAULT;
                 break;
             }
-     
+
             for ( j = 0; j < k; j++ )
-            {      
+            {
                 struct page_info *page;
                 unsigned long gfn = arr32[j];
 
@@ -365,8 +365,8 @@ long arch_do_domctl(
                 ret = -EFAULT;
                 break;
             }
-			++i;
-		}
+            ++i;
+        }
 
         spin_unlock(&d->page_alloc_lock);
 
@@ -402,11 +402,11 @@ long arch_do_domctl(
     break;
 
     case XEN_DOMCTL_sethvmcontext:
-    { 
+    {
         struct hvm_domain_context c = { .size = domctl->u.hvmcontext.size };
 
         ret = -EINVAL;
-        if ( !is_hvm_domain(d) ) 
+        if ( !is_hvm_domain(d) )
             goto sethvmcontext_out;
 
         ret = -ENOMEM;
@@ -428,11 +428,11 @@ long arch_do_domctl(
     break;
 
     case XEN_DOMCTL_gethvmcontext:
-    { 
+    {
         struct hvm_domain_context c = { 0 };
 
         ret = -EINVAL;
-        if ( !is_hvm_domain(d) ) 
+        if ( !is_hvm_domain(d) )
             goto gethvmcontext_out;
 
         c.size = hvm_save_size(d);
@@ -442,12 +442,12 @@ long arch_do_domctl(
             /* Client is querying for the correct buffer size */
             domctl->u.hvmcontext.size = c.size;
             ret = 0;
-            goto gethvmcontext_out;            
+            goto gethvmcontext_out;
         }
 
         /* Check that the client has a big enough buffer */
         ret = -ENOSPC;
-        if ( domctl->u.hvmcontext.size < c.size ) 
+        if ( domctl->u.hvmcontext.size < c.size )
             goto gethvmcontext_out;
 
         /* Allocate our own marshalling buffer */
@@ -472,9 +472,9 @@ long arch_do_domctl(
     break;
 
     case XEN_DOMCTL_gethvmcontext_partial:
-    { 
+    {
         ret = -EINVAL;
-        if ( !is_hvm_domain(d) ) 
+        if ( !is_hvm_domain(d) )
             break;
 
         domain_pause(d);
@@ -560,7 +560,7 @@ long arch_do_domctl(
         case XEN_DOMCTL_SENDTRIGGER_POWER:
         {
             ret = -EINVAL;
-            if ( is_hvm_domain(d) ) 
+            if ( is_hvm_domain(d) )
             {
                 ret = 0;
                 hvm_acpi_power_button(d);
@@ -571,7 +571,7 @@ long arch_do_domctl(
         case XEN_DOMCTL_SENDTRIGGER_SLEEP:
         {
             ret = -EINVAL;
-            if ( is_hvm_domain(d) ) 
+            if ( is_hvm_domain(d) )
             {
                 ret = 0;
                 hvm_acpi_sleep_button(d);
@@ -614,7 +614,7 @@ long arch_do_domctl(
             printk(XENLOG_G_ERR "pt_irq_create_bind failed (%ld) for dom%d\n",
                    ret, d->domain_id);
     }
-    break;    
+    break;
 
     case XEN_DOMCTL_unbind_pt_irq:
     {
@@ -946,7 +946,7 @@ long arch_do_domctl(
                   (cpuid->input[1] == ctl->input[1])) )
                 break;
         }
-        
+
         if ( i < MAX_CPUID_INPUT )
             *cpuid = *ctl;
         else if ( unused )
@@ -1250,7 +1250,7 @@ long arch_do_domctl(
     case XEN_DOMCTL_set_access_required:
     {
         struct p2m_domain* p2m;
-        
+
         ret = -EPERM;
         if ( current->domain == d )
             break;
