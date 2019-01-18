@@ -152,6 +152,14 @@
 #define X86_FEATURE_NO_FPU_SEL 	(7*32+13) /* FPU CS/DS stored as zero */
 #define X86_FEATURE_SMAP	(7*32+20) /* Supervisor Mode Access Prevention */
 
+#define X86_FEATURE_SC_MSR_PV		(10*32+ 14) /* MSR_SPEC_CTRL used by Xen for PV */
+#define X86_FEATURE_SC_MSR_HVM		(10*32+ 15) /* MSR_SPEC_CTRL used by Xen for HVM */
+#define X86_FEATURE_SC_RSB_PV		(10*32+ 16) /* RSB overwrite needed for PV */
+#define X86_FEATURE_SC_RSB_HVM		(10*32+ 17) /* RSB overwrite needed for HVM */
+#define X86_FEATURE_NO_XPTI		(10*32+ 18) /* XPTI mitigation not in use */
+#define X86_FEATURE_SC_MSR_IDLE	(10*32+ 19) /* (SC_MSR_PV || SC_MSR_HVM) && default_xen_spec_ctrl */
+
+
 #define cpu_has(c, bit)		test_bit(bit, (c)->x86_capability)
 #define boot_cpu_has(bit)	test_bit(bit, boot_cpu_data.x86_capability)
 #define cpufeat_mask(idx)       (1u << ((idx) & 31))

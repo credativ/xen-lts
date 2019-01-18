@@ -103,4 +103,6 @@ void ret_from_intr(void);
 
 #endif
 
+#include <asm/spec_ctrl_asm.h>
+
 #endif /* __X86_ASM_DEFNS_H__ */
