@@ -3086,15 +3086,10 @@ static void gnttab_usage_print_all(unsigned char key)
     printk("%s ] done\n", __FUNCTION__);
 }
 
-static struct keyhandler gnttab_usage_print_all_keyhandler = {
-    .diagnostic = 1,
-    .u.fn = gnttab_usage_print_all,
-    .desc = "print grant table usage"
-};
-
 static int __init gnttab_usage_init(void)
 {
-    register_keyhandler('g', &gnttab_usage_print_all_keyhandler);
+    register_keyhandler('g', gnttab_usage_print_all,
+        "print grant table usage", 1);
     return 0;
 }
 __initcall(gnttab_usage_init);

@@ -12,6 +12,7 @@ obj-y += bitops.o
 obj-bin-y += bzimage.init.o
 obj-bin-y += clear_page.o
 obj-bin-y += copy_page.o
+obj-y += cpuid.o
 obj-y += compat.o
 obj-y += debug.o
 obj-y += delay.o
@@ -45,6 +46,7 @@ obj-y += setup.o
 obj-y += shutdown.o
 obj-y += smp.o
 obj-y += smpboot.o
+obj-y += spec_ctrl.o
 obj-y += srat.o
 obj-y += string.o
 obj-y += sysctl.o
@@ -108,7 +110,7 @@ $(TARGET)-syms: prelink.o xen.lds $(BASEDIR)/common/symbols-dummy.o
 	    $(@D)/.$(@F).0.o -o $(@D)/.$(@F).1
 	$(NM) -n $(@D)/.$(@F).1 | $(BASEDIR)/tools/symbols >$(@D)/.$(@F).1.S
 	$(MAKE) -f $(BASEDIR)/Rules.mk $(@D)/.$(@F).1.o
-	$(LD) $(LDFLAGS) -T xen.lds -N prelink.o \
+	$(LD) $(LDFLAGS) -T xen.lds -N prelink.o  $(build_id_linker) \
 	    $(@D)/.$(@F).1.o -o $@
 	rm -f $(@D)/.$(@F).[0-9]*
 

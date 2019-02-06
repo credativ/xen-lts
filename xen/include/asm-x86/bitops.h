@@ -5,19 +5,20 @@
  * Copyright 1992, Linus Torvalds.
  */
 
-#include <xen/config.h>
+#include <asm/alternative.h>
+#define X86_FEATURES_ONLY
+#include <asm/cpufeature.h>
 
 /*
  * We specify the memory operand as both input and output because the memory
  * operand is both read from and written to. Since the operand is in fact a
  * word array, we also specify "memory" in the clobbers list to indicate that
  * words other than the one directly addressed by the memory operand may be
- * modified. We don't use "+m" because the gcc manual says that it should be
- * used only when the constraint allows the operand to reside in a register.
+ * modified.
  */
 
-#define ADDR (*(volatile long *) addr)
-#define CONST_ADDR (*(const volatile long *) addr)
+#define ADDR (*(volatile int *) addr)
+#define CONST_ADDR (*(const volatile int *) addr)
 
 extern void __bitop_bad_size(void);
 #define bitop_bad_size(addr) (sizeof(*(addr)) < 4)
@@ -34,10 +35,8 @@ extern void __bitop_bad_size(void);
  */
 static inline void set_bit(int nr, volatile void *addr)
 {
-    asm volatile (
-        "lock; btsl %1,%0"
-        : "=m" (ADDR)
-        : "Ir" (nr), "m" (ADDR) : "memory");
+    asm volatile ( "lock; btsl %1,%0"
+                   : "+m" (ADDR) : "Ir" (nr) : "memory");
 }
 #define set_bit(nr, addr) ({                            \
     if ( bitop_bad_size(addr) ) __bitop_bad_size();     \
@@ -53,12 +52,9 @@ static inline void set_bit(int nr, volatile void *addr)
  * If it's called on the same region of memory simultaneously, the effect
  * may be that only one operation succeeds.
  */
-static inline void __set_bit(int nr, volatile void *addr)
+static inline void __set_bit(int nr, void *addr)
 {
-    asm volatile (
-        "btsl %1,%0"
-        : "=m" (ADDR)
-        : "Ir" (nr), "m" (ADDR) : "memory");
+    asm volatile ( "btsl %1,%0" : "+m" (*(int *)addr) : "Ir" (nr) : "memory" );
 }
 #define __set_bit(nr, addr) ({                          \
     if ( bitop_bad_size(addr) ) __bitop_bad_size();     \
@@ -74,10 +70,8 @@ static inline void __set_bit(int nr, volatile void *addr)
  */
 static inline void clear_bit(int nr, volatile void *addr)
 {
-    asm volatile (
-        "lock; btrl %1,%0"
-        : "=m" (ADDR)
-        : "Ir" (nr), "m" (ADDR) : "memory");
+    asm volatile ( "lock; btrl %1,%0"
+                   : "+m" (ADDR) : "Ir" (nr) : "memory");
 }
 #define clear_bit(nr, addr) ({                          \
     if ( bitop_bad_size(addr) ) __bitop_bad_size();     \
@@ -93,12 +87,9 @@ static inline void clear_bit(int nr, volatile void *addr)
  * If it's called on the same region of memory simultaneously, the effect
  * may be that only one operation succeeds.
  */
-static inline void __clear_bit(int nr, volatile void *addr)
+static inline void __clear_bit(int nr, void *addr)
 {
-    asm volatile (
-        "btrl %1,%0"
-        : "=m" (ADDR)
-        : "Ir" (nr), "m" (ADDR) : "memory");
+    asm volatile ( "btrl %1,%0" : "+m" (*(int *)addr) : "Ir" (nr) : "memory" );
 }
 #define __clear_bit(nr, addr) ({                        \
     if ( bitop_bad_size(addr) ) __bitop_bad_size();     \
@@ -114,12 +105,9 @@ static inline void __clear_bit(int nr, volatile void *addr)
  * If it's called on the same region of memory simultaneously, the effect
  * may be that only one operation succeeds.
  */
-static inline void __change_bit(int nr, volatile void *addr)
+static inline void __change_bit(int nr, void *addr)
 {
-    asm volatile (
-        "btcl %1,%0"
-        : "=m" (ADDR)
-        : "Ir" (nr), "m" (ADDR) : "memory");
+    asm volatile ( "btcl %1,%0" : "+m" (*(int *)addr) : "Ir" (nr) : "memory" );
 }
 #define __change_bit(nr, addr) ({                       \
     if ( bitop_bad_size(addr) ) __bitop_bad_size();     \
@@ -137,10 +125,8 @@ static inline void __change_bit(int nr, volatile void *addr)
  */
 static inline void change_bit(int nr, volatile void *addr)
 {
-    asm volatile (
-        "lock; btcl %1,%0"
-        : "=m" (ADDR)
-        : "Ir" (nr), "m" (ADDR) : "memory");
+    asm volatile ( "lock; btcl %1,%0"
+                    : "+m" (ADDR) : "Ir" (nr) : "memory");
 }
 #define change_bit(nr, addr) ({                         \
     if ( bitop_bad_size(addr) ) __bitop_bad_size();     \
@@ -159,10 +145,8 @@ static inline int test_and_set_bit(int nr, volatile void *addr)
 {
     int oldbit;
 
-    asm volatile (
-        "lock; btsl %2,%1\n\tsbbl %0,%0"
-        : "=r" (oldbit), "=m" (ADDR)
-        : "Ir" (nr), "m" (ADDR) : "memory");
+    asm volatile ( "lock; btsl %2,%1\n\tsbbl %0,%0"
+                   : "=r" (oldbit), "+m" (ADDR) : "Ir" (nr) : "memory");
     return oldbit;
 }
 #define test_and_set_bit(nr, addr) ({                   \
@@ -179,14 +163,14 @@ static inline int test_and_set_bit(int nr, volatile void *addr)
  * If two examples of this operation race, one can appear to succeed
  * but actually fail.  You must protect multiple accesses with a lock.
  */
-static inline int __test_and_set_bit(int nr, volatile void *addr)
+static inline int __test_and_set_bit(int nr, void *addr)
 {
     int oldbit;
 
     asm volatile (
         "btsl %2,%1\n\tsbbl %0,%0"
-        : "=r" (oldbit), "=m" (ADDR)
-        : "Ir" (nr), "m" (ADDR) : "memory");
+        : "=r" (oldbit), "+m" (*(int *)addr)
+        : "Ir" (nr) : "memory" );
     return oldbit;
 }
 #define __test_and_set_bit(nr, addr) ({                 \
@@ -206,10 +190,8 @@ static inline int test_and_clear_bit(int nr, volatile void *addr)
 {
     int oldbit;
 
-    asm volatile (
-        "lock; btrl %2,%1\n\tsbbl %0,%0"
-        : "=r" (oldbit), "=m" (ADDR)
-        : "Ir" (nr), "m" (ADDR) : "memory");
+    asm volatile ( "lock; btrl %2,%1\n\tsbbl %0,%0"
+                   : "=r" (oldbit), "+m" (ADDR) : "Ir" (nr) : "memory");
     return oldbit;
 }
 #define test_and_clear_bit(nr, addr) ({                 \
@@ -226,14 +208,14 @@ static inline int test_and_clear_bit(int nr, volatile void *addr)
  * If two examples of this operation race, one can appear to succeed
  * but actually fail.  You must protect multiple accesses with a lock.
  */
-static inline int __test_and_clear_bit(int nr, volatile void *addr)
+static inline int __test_and_clear_bit(int nr, void *addr)
 {
     int oldbit;
 
     asm volatile (
         "btrl %2,%1\n\tsbbl %0,%0"
-        : "=r" (oldbit), "=m" (ADDR)
-        : "Ir" (nr), "m" (ADDR) : "memory");
+        : "=r" (oldbit), "+m" (*(int *)addr)
+        : "Ir" (nr) : "memory" );
     return oldbit;
 }
 #define __test_and_clear_bit(nr, addr) ({               \
@@ -242,14 +224,14 @@ static inline int __test_and_clear_bit(int nr, volatile void *addr)
 })
 
 /* WARNING: non atomic and it can be reordered! */
-static inline int __test_and_change_bit(int nr, volatile void *addr)
+static inline int __test_and_change_bit(int nr, void *addr)
 {
     int oldbit;
 
     asm volatile (
         "btcl %2,%1\n\tsbbl %0,%0"
-        : "=r" (oldbit), "=m" (ADDR)
-        : "Ir" (nr), "m" (ADDR) : "memory");
+        : "=r" (oldbit), "+m" (*(int *)addr)
+        : "Ir" (nr) : "memory" );
     return oldbit;
 }
 #define __test_and_change_bit(nr, addr) ({              \
@@ -269,10 +251,8 @@ static inline int test_and_change_bit(int nr, volatile void *addr)
 {
     int oldbit;
 
-    asm volatile (
-        "lock; btcl %2,%1\n\tsbbl %0,%0"
-        : "=r" (oldbit), "=m" (ADDR)
-        : "Ir" (nr), "m" (ADDR) : "memory");
+    asm volatile ( "lock; btcl %2,%1\n\tsbbl %0,%0"
+                   : "=r" (oldbit), "+m" (ADDR) : "Ir" (nr) : "memory");
     return oldbit;
 }
 #define test_and_change_bit(nr, addr) ({                \
@@ -313,9 +293,17 @@ extern unsigned int __find_first_zero_bit(
 extern unsigned int __find_next_zero_bit(
     const unsigned long *addr, unsigned int size, unsigned int offset);
 
-static inline unsigned int __scanbit(unsigned long val, unsigned long max)
+static inline unsigned int __scanbit(unsigned long val, unsigned int max)
 {
-    asm ( "bsf %1,%0 ; cmovz %2,%0" : "=&r" (val) : "r" (val), "r" (max) );
+    if ( __builtin_constant_p(max) && max == BITS_PER_LONG )
+        alternative_io("bsf %[in],%[out]; cmovz %[max],%k[out]",
+                       "rep; bsf %[in],%[out]",
+                       X86_FEATURE_BMI1,
+                       [out] "=&r" (val),
+                       [in] "r" (val), [max] "r" (max));
+    else
+        asm ( "bsf %1,%0 ; cmovz %2,%k0"
+              : "=&r" (val) : "r" (val), "r" (max) );
     return (unsigned int)val;
 }
 
@@ -335,23 +323,20 @@ static inline unsigned int __scanbit(unsigned long val, unsigned long max)
  * @offset: The bitnumber to start searching at
  * @size: The maximum size to search
  */
-#define find_next_bit(addr, size, off) ({ \
-    unsigned int r__ = (size); \
-    unsigned int o__ = (off); \
-    switch ( -!__builtin_constant_p(size) | r__ ) \
-    { \
-    case 0: (void)(addr); break; \
-    case 1 ... BITS_PER_LONG: \
-        r__ = o__ + __scanbit(*(const unsigned long *)(addr) >> o__, r__); \
-        break; \
-    default: \
-        if ( __builtin_constant_p(off) && !o__ ) \
-            r__ = __find_first_bit(addr, r__); \
-        else \
-            r__ = __find_next_bit(addr, r__, o__); \
-        break; \
-    } \
-    r__; \
+#define find_next_bit(addr, size, off) ({                                   \
+    unsigned int r__;                                                       \
+    const unsigned long *a__ = (addr);                                      \
+    unsigned int s__ = (size);                                              \
+    unsigned int o__ = (off);                                               \
+    if ( __builtin_constant_p(size) && !s__ )                               \
+        r__ = s__;                                                          \
+    else if ( __builtin_constant_p(size) && s__ <= BITS_PER_LONG )          \
+        r__ = o__ + __scanbit(*(const unsigned long *)(a__) >> o__, s__);   \
+    else if ( __builtin_constant_p(off) && !o__ )                           \
+        r__ = __find_first_bit(a__, s__);                                   \
+    else                                                                    \
+        r__ = __find_next_bit(a__, s__, o__);                               \
+    r__;                                                                    \
 })
 
 /**
@@ -370,23 +355,20 @@ static inline unsigned int __scanbit(unsigned long val, unsigned long max)
  * @offset: The bitnumber to start searching at
  * @size: The maximum size to search
  */
-#define find_next_zero_bit(addr, size, off) ({ \
-    unsigned int r__ = (size); \
-    unsigned int o__ = (off); \
-    switch ( -!__builtin_constant_p(size) | r__ ) \
-    { \
-    case 0: (void)(addr); break; \
-    case 1 ... BITS_PER_LONG: \
-        r__ = o__ + __scanbit(~*(const unsigned long *)(addr) >> o__, r__); \
-        break; \
-    default: \
-        if ( __builtin_constant_p(off) && !o__ ) \
-            r__ = __find_first_zero_bit(addr, r__); \
-        else \
-            r__ = __find_next_zero_bit(addr, r__, o__); \
-        break; \
-    } \
-    r__; \
+#define find_next_zero_bit(addr, size, off) ({                              \
+    unsigned int r__;                                                       \
+    const unsigned long *a__ = (addr);                                      \
+    unsigned int s__ = (size);                                              \
+    unsigned int o__ = (off);                                               \
+    if ( __builtin_constant_p(size) && !s__ )                               \
+        r__ = s__;                                                          \
+    else if ( __builtin_constant_p(size) && s__ <= BITS_PER_LONG )          \
+        r__ = o__ + __scanbit(~*(const unsigned long *)(a__) >> o__, s__);  \
+    else if ( __builtin_constant_p(off) && !o__ )                           \
+        r__ = __find_first_zero_bit(a__, s__);                              \
+    else                                                                    \
+        r__ = __find_next_zero_bit(a__, s__, o__);                          \
+    r__;                                                                    \
 })
 
 /**
@@ -397,7 +379,7 @@ static inline unsigned int __scanbit(unsigned long val, unsigned long max)
  */
 static inline unsigned int find_first_set_bit(unsigned long word)
 {
-    asm ( "bsf %1,%0" : "=r" (word) : "r" (word) );
+    asm ( "rep; bsf %1,%0" : "=r" (word) : "rm" (word) );
     return (unsigned int)word;
 }
 
@@ -407,7 +389,7 @@ static inline unsigned int find_first_set_bit(unsigned long word)
  *
  * This is defined the same way as the libc and compiler builtin ffs routines.
  */
-static inline int ffs(unsigned long x)
+static inline int ffsl(unsigned long x)
 {
     long r;
 
@@ -418,13 +400,24 @@ static inline int ffs(unsigned long x)
     return (int)r+1;
 }
 
+static inline int ffs(unsigned int x)
+{
+    int r;
+
+    asm ( "bsf %1,%0\n\t"
+          "jnz 1f\n\t"
+          "mov $-1,%0\n"
+          "1:" : "=r" (r) : "rm" (x));
+    return r + 1;
+}
+
 /**
  * fls - find last bit set
  * @x: the word to search
  *
  * This is defined the same way as ffs.
  */
-static inline int fls(unsigned long x)
+static inline int flsl(unsigned long x)
 {
     long r;
 
@@ -433,6 +426,17 @@ static inline int fls(unsigned long x)
           "mov $-1,%0\n"
           "1:" : "=r" (r) : "rm" (x));
     return (int)r+1;
+}
+
+static inline int fls(unsigned int x)
+{
+    int r;
+
+    asm ( "bsr %1,%0\n\t"
+          "jnz 1f\n\t"
+          "mov $-1,%0\n"
+          "1:" : "=r" (r) : "rm" (x));
+    return r + 1;
 }
 
 /**

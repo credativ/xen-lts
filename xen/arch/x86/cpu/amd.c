@@ -10,6 +10,7 @@
 #include <asm/amd.h>
 #include <asm/hvm/support.h>
 #include <asm/setup.h> /* amd_init_cpu */
+#include <asm/spec_ctrl.h>
 #include <asm/acpi.h>
 #include <asm/apic.h>
 
@@ -30,23 +31,20 @@
  * "fam_10_rev_c"
  * "fam_11_rev_b"
  */
-static char opt_famrev[14];
+static char __initdata opt_famrev[14];
 string_param("cpuid_mask_cpu", opt_famrev);
+
+static unsigned int __initdata opt_cpuid_mask_l7s0_eax = ~0u;
+integer_param("cpuid_mask_l7s0_eax", opt_cpuid_mask_l7s0_eax);
+static unsigned int __initdata opt_cpuid_mask_l7s0_ebx = ~0u;
+integer_param("cpuid_mask_l7s0_ebx", opt_cpuid_mask_l7s0_ebx);
+
+static unsigned int __initdata opt_cpuid_mask_thermal_ecx = ~0u;
+integer_param("cpuid_mask_thermal_ecx", opt_cpuid_mask_thermal_ecx);
 
 /* 1 = allow, 0 = don't allow guest creation, -1 = don't allow boot */
 s8 __read_mostly opt_allow_unsafe;
 boolean_param("allow_unsafe", opt_allow_unsafe);
-
-static inline void wrmsr_amd(unsigned int index, unsigned int lo, 
-		unsigned int hi)
-{
-	asm volatile (
-		"wrmsr"
-		: /* No outputs */
-		: "c" (index), "a" (lo), 
-		"d" (hi), "D" (0x9c5a203a)
-	);
-}
 
 static inline int rdmsr_amd_safe(unsigned int msr, unsigned int *lo,
 				 unsigned int *hi)
@@ -83,6 +81,172 @@ static inline int wrmsr_amd_safe(unsigned int msr, unsigned int lo,
 	return err;
 }
 
+static void wrmsr_amd(unsigned int msr, uint64_t val)
+{
+	asm volatile("wrmsr" ::
+		     "c" (msr), "a" ((uint32_t)val),
+		     "d" (val >> 32), "D" (0x9c5a203a));
+}
+
+static const struct cpuidmask {
+	uint16_t fam;
+	char rev[2];
+	unsigned int ecx, edx, ext_ecx, ext_edx;
+} pre_canned[] __initconst = {
+#define CAN(fam, id, rev) { \
+		fam, #rev, \
+		AMD_FEATURES_##id##_REV_##rev##_ECX, \
+		AMD_FEATURES_##id##_REV_##rev##_EDX, \
+		AMD_EXTFEATURES_##id##_REV_##rev##_ECX, \
+		AMD_EXTFEATURES_##id##_REV_##rev##_EDX \
+	}
+#define CAN_FAM(fam, rev) CAN(0x##fam, FAM##fam##h, rev)
+#define CAN_K8(rev)       CAN(0x0f,    K8,          rev)
+	CAN_FAM(11, B),
+	CAN_FAM(10, C),
+	CAN_FAM(10, B),
+	CAN_K8(G),
+	CAN_K8(F),
+	CAN_K8(E),
+	CAN_K8(D),
+	CAN_K8(C)
+#undef CAN
+};
+
+static const struct cpuidmask *__init noinline get_cpuidmask(const char *opt)
+{
+	unsigned long fam;
+	char rev;
+	unsigned int i;
+
+	if (strncmp(opt, "fam_", 4))
+		return NULL;
+	fam = simple_strtoul(opt + 4, &opt, 16);
+	if (strncmp(opt, "_rev_", 5) || !opt[5] || opt[6])
+		return NULL;
+	rev = toupper(opt[5]);
+
+	for (i = 0; i < ARRAY_SIZE(pre_canned); ++i)
+		if (fam == pre_canned[i].fam && rev == *pre_canned[i].rev)
+			return &pre_canned[i];
+
+	return NULL;
+}
+
+/*
+ * Sets caps in expected_levelling_cap, probes for the specified mask MSR, and
+ * set caps in levelling_caps if it is found.  Processors prior to Fam 10h
+ * required a 32-bit password for masking MSRs.  Returns the default value.
+ */
+static uint64_t __init _probe_mask_msr(unsigned int msr, uint64_t caps)
+{
+	unsigned int hi, lo;
+
+	expected_levelling_cap |= caps;
+
+	if ((rdmsr_amd_safe(msr, &lo, &hi) == 0) &&
+	    (wrmsr_amd_safe(msr, lo, hi) == 0))
+		levelling_caps |= caps;
+
+	return ((uint64_t)hi << 32) | lo;
+}
+
+/*
+ * Probe for the existance of the expected masking MSRs.  They might easily
+ * not be available if Xen is running virtualised.
+ */
+static void __init noinline probe_masking_msrs(void)
+{
+	const struct cpuinfo_x86 *c = &boot_cpu_data;
+
+	/*
+	 * First, work out which masking MSRs we should have, based on
+	 * revision and cpuid.
+	 */
+
+	/* Fam11 doesn't support masking at all. */
+	if (c->x86 == 0x11)
+		return;
+
+	cpuidmask_defaults._1cd =
+		_probe_mask_msr(MSR_K8_FEATURE_MASK, LCAP_1cd);
+	cpuidmask_defaults.e1cd =
+		_probe_mask_msr(MSR_K8_EXT_FEATURE_MASK, LCAP_e1cd);
+
+	if (c->cpuid_level >= 7)
+		cpuidmask_defaults._7ab0 =
+			_probe_mask_msr(MSR_AMD_L7S0_FEATURE_MASK, LCAP_7ab0);
+
+	if (c->x86 == 0x15 && c->cpuid_level >= 6 && cpuid_ecx(6))
+		cpuidmask_defaults._6c =
+			_probe_mask_msr(MSR_AMD_THRM_FEATURE_MASK, LCAP_6c);
+
+	/*
+	 * Don't bother warning about a mismatch if virtualised.  These MSRs
+	 * are not architectural and almost never virtualised.
+	 */
+	if ((expected_levelling_cap == levelling_caps) ||
+	    cpu_has_hypervisor)
+		return;
+
+	printk(XENLOG_WARNING "Mismatch between expected (%#x) "
+	       "and real (%#x) levelling caps: missing %#x\n",
+	       expected_levelling_cap, levelling_caps,
+	       (expected_levelling_cap ^ levelling_caps) & levelling_caps);
+	printk(XENLOG_WARNING "Fam %#x, model %#x level %#x\n",
+	       c->x86, c->x86_model, c->cpuid_level);
+	printk(XENLOG_WARNING
+	       "If not running virtualised, please report a bug\n");
+}
+
+/*
+ * Context switch levelling state to the next domain.  A parameter of NULL is
+ * used to context switch to the default host state (by the cpu bringup-code,
+ * crash path, etc).
+ */
+static void amd_ctxt_switch_levelling(const struct vcpu *next)
+{
+	struct cpuidmasks *these_masks = &this_cpu(cpuidmasks);
+	const struct domain *nextd = next ? next->domain : NULL;
+	const struct cpuidmasks *masks =
+		(nextd && is_pv_domain(nextd) && nextd->arch.pv_domain.cpuidmasks)
+		? nextd->arch.pv_domain.cpuidmasks : &cpuidmask_defaults;
+
+	if ((levelling_caps & LCAP_1cd) == LCAP_1cd) {
+		uint64_t val = masks->_1cd;
+
+		/*
+		 * OSXSAVE defaults to 1, which causes fast-forwarding of
+		 * Xen's real setting.  Clobber it if disabled by the guest
+		 * kernel.
+		 */
+		if (next && is_pv_vcpu(next) && !is_idle_vcpu(next) &&
+		    !(next->arch.pv_vcpu.ctrlreg[4] & X86_CR4_OSXSAVE))
+			val &= ~((uint64_t)cpufeat_mask(X86_FEATURE_OSXSAVE) << 32);
+
+		if (unlikely(these_masks->_1cd != val)) {
+			wrmsr_amd(MSR_K8_FEATURE_MASK, val);
+			these_masks->_1cd = val;
+		}
+	}
+
+#define LAZY(cap, msr, field)						\
+	({								\
+		if (unlikely(these_masks->field != masks->field) &&	\
+		    ((levelling_caps & cap) == cap))			\
+		{							\
+			wrmsr_amd(msr, masks->field);			\
+			these_masks->field = masks->field;		\
+		}							\
+	})
+
+	LAZY(LCAP_e1cd, MSR_K8_EXT_FEATURE_MASK,   e1cd);
+	LAZY(LCAP_7ab0, MSR_AMD_L7S0_FEATURE_MASK, _7ab0);
+	LAZY(LCAP_6c,   MSR_AMD_THRM_FEATURE_MASK, _6c);
+
+#undef LAZY
+}
+
 /*
  * Mask the features and extended features returned by CPUID.  Parameters are
  * set from the boot line via two methods:
@@ -90,104 +254,107 @@ static inline int wrmsr_amd_safe(unsigned int msr, unsigned int lo,
  *   1) Specific processor revision string
  *   2) User-defined masks
  *
- * The processor revision string parameter has precedene.
+ * The user-defined masks take precedence.
+ *
+ * AMD "masking msrs" are actually overrides, making it possible to advertise
+ * features which are not supported by the hardware.  Care must be taken to
+ * avoid this, as the accidentally-advertised features will not actually
+ * function.
  */
-static void __devinit set_cpuidmask(const struct cpuinfo_x86 *c)
+static void __init noinline amd_init_levelling(void)
 {
-	static unsigned int feat_ecx, feat_edx;
-	static unsigned int extfeat_ecx, extfeat_edx;
-	static enum { not_parsed, no_mask, set_mask } status;
+	const struct cpuidmask *m = NULL;
 
-	if (status == no_mask)
-		return;
+	probe_masking_msrs();
 
-	if (status == set_mask)
-		goto setmask;
+	if (*opt_famrev != '\0') {
+		m = get_cpuidmask(opt_famrev);
 
-	ASSERT((status == not_parsed) && (smp_processor_id() == 0));
-	status = no_mask;
-
-	/* Fam11 doesn't support masking at all. */
-	if (c->x86 == 0x11)
-		return;
-
-	if (~(opt_cpuid_mask_ecx & opt_cpuid_mask_edx &
-	      opt_cpuid_mask_ext_ecx & opt_cpuid_mask_ext_edx)) {
-		feat_ecx = opt_cpuid_mask_ecx;
-		feat_edx = opt_cpuid_mask_edx;
-		extfeat_ecx = opt_cpuid_mask_ext_ecx;
-		extfeat_edx = opt_cpuid_mask_ext_edx;
-	} else if (*opt_famrev == '\0') {
-		return;
-	} else if (!strcmp(opt_famrev, "fam_0f_rev_c")) {
-		feat_ecx = AMD_FEATURES_K8_REV_C_ECX;
-		feat_edx = AMD_FEATURES_K8_REV_C_EDX;
-		extfeat_ecx = AMD_EXTFEATURES_K8_REV_C_ECX;
-		extfeat_edx = AMD_EXTFEATURES_K8_REV_C_EDX;
-	} else if (!strcmp(opt_famrev, "fam_0f_rev_d")) {
-		feat_ecx = AMD_FEATURES_K8_REV_D_ECX;
-		feat_edx = AMD_FEATURES_K8_REV_D_EDX;
-		extfeat_ecx = AMD_EXTFEATURES_K8_REV_D_ECX;
-		extfeat_edx = AMD_EXTFEATURES_K8_REV_D_EDX;
-	} else if (!strcmp(opt_famrev, "fam_0f_rev_e")) {
-		feat_ecx = AMD_FEATURES_K8_REV_E_ECX;
-		feat_edx = AMD_FEATURES_K8_REV_E_EDX;
-		extfeat_ecx = AMD_EXTFEATURES_K8_REV_E_ECX;
-		extfeat_edx = AMD_EXTFEATURES_K8_REV_E_EDX;
-	} else if (!strcmp(opt_famrev, "fam_0f_rev_f")) {
-		feat_ecx = AMD_FEATURES_K8_REV_F_ECX;
-		feat_edx = AMD_FEATURES_K8_REV_F_EDX;
-		extfeat_ecx = AMD_EXTFEATURES_K8_REV_F_ECX;
-		extfeat_edx = AMD_EXTFEATURES_K8_REV_F_EDX;
-	} else if (!strcmp(opt_famrev, "fam_0f_rev_g")) {
-		feat_ecx = AMD_FEATURES_K8_REV_G_ECX;
-		feat_edx = AMD_FEATURES_K8_REV_G_EDX;
-		extfeat_ecx = AMD_EXTFEATURES_K8_REV_G_ECX;
-		extfeat_edx = AMD_EXTFEATURES_K8_REV_G_EDX;
-	} else if (!strcmp(opt_famrev, "fam_10_rev_b")) {
-		feat_ecx = AMD_FEATURES_FAM10h_REV_B_ECX;
-		feat_edx = AMD_FEATURES_FAM10h_REV_B_EDX;
-		extfeat_ecx = AMD_EXTFEATURES_FAM10h_REV_B_ECX;
-		extfeat_edx = AMD_EXTFEATURES_FAM10h_REV_B_EDX;
-	} else if (!strcmp(opt_famrev, "fam_10_rev_c")) {
-		feat_ecx = AMD_FEATURES_FAM10h_REV_C_ECX;
-		feat_edx = AMD_FEATURES_FAM10h_REV_C_EDX;
-		extfeat_ecx = AMD_EXTFEATURES_FAM10h_REV_C_ECX;
-		extfeat_edx = AMD_EXTFEATURES_FAM10h_REV_C_EDX;
-	} else if (!strcmp(opt_famrev, "fam_11_rev_b")) {
-		feat_ecx = AMD_FEATURES_FAM11h_REV_B_ECX;
-		feat_edx = AMD_FEATURES_FAM11h_REV_B_EDX;
-		extfeat_ecx = AMD_EXTFEATURES_FAM11h_REV_B_ECX;
-		extfeat_edx = AMD_EXTFEATURES_FAM11h_REV_B_EDX;
-	} else {
-		printk("Invalid processor string: %s\n", opt_famrev);
-		printk("CPUID will not be masked\n");
-		return;
+		if (!m)
+			printk("Invalid processor string: %s\n", opt_famrev);
 	}
 
-        /* Setting bits in the CPUID mask MSR that are not set in the
-         * unmasked CPUID response can cause those bits to be set in the
-         * masked response.  Avoid that by explicitly masking in software. */
-        feat_ecx &= cpuid_ecx(0x00000001);
-        feat_edx &= cpuid_edx(0x00000001);
-        extfeat_ecx &= cpuid_ecx(0x80000001);
-        extfeat_edx &= cpuid_edx(0x80000001);
+	if ((levelling_caps & LCAP_1cd) == LCAP_1cd) {
+		uint32_t ecx, edx, tmp;
 
-	status = set_mask;
-	printk("Writing CPUID feature mask ECX:EDX -> %08Xh:%08Xh\n", 
-	       feat_ecx, feat_edx);
-	printk("Writing CPUID extended feature mask ECX:EDX -> %08Xh:%08Xh\n", 
-	       extfeat_ecx, extfeat_edx);
+		cpuid(0x00000001, &tmp, &tmp, &ecx, &edx);
 
- setmask:
-	/* AMD processors prior to family 10h required a 32-bit password */
-	if (c->x86 >= 0x10) {
-		wrmsr(MSR_K8_FEATURE_MASK, feat_edx, feat_ecx);
-		wrmsr(MSR_K8_EXT_FEATURE_MASK, extfeat_edx, extfeat_ecx);
-	} else {
-		wrmsr_amd(MSR_K8_FEATURE_MASK, feat_edx, feat_ecx);
-		wrmsr_amd(MSR_K8_EXT_FEATURE_MASK, extfeat_edx, extfeat_ecx);
+		if (~(opt_cpuid_mask_ecx & opt_cpuid_mask_edx)) {
+			ecx &= opt_cpuid_mask_ecx;
+			edx &= opt_cpuid_mask_edx;
+		} else if (m) {
+			ecx &= m->ecx;
+			edx &= m->edx;
+		}
+
+		/* Fast-forward bits - Must be set. */
+		if (ecx & cpufeat_mask(X86_FEATURE_XSAVE))
+			ecx |= cpufeat_mask(X86_FEATURE_OSXSAVE);
+		edx |= cpufeat_mask(X86_FEATURE_APIC);
+
+		/* Allow the HYPERVISOR bit to be set via guest policy. */
+		ecx |= cpufeat_mask(X86_FEATURE_HYPERVISOR);
+
+		cpuidmask_defaults._1cd = ((uint64_t)ecx << 32) | edx;
 	}
+
+	if ((levelling_caps & LCAP_e1cd) == LCAP_e1cd) {
+		uint32_t ecx, edx, tmp;
+
+		cpuid(0x80000001, &tmp, &tmp, &ecx, &edx);
+
+		if (~(opt_cpuid_mask_ext_ecx & opt_cpuid_mask_ext_edx)) {
+			ecx &= opt_cpuid_mask_ext_ecx;
+			edx &= opt_cpuid_mask_ext_edx;
+		} else if (m) {
+			ecx &= m->ext_ecx;
+			edx &= m->ext_edx;
+		}
+
+		/* Fast-forward bits - Must be set. */
+		edx |= cpufeat_mask(X86_FEATURE_APIC);
+
+		cpuidmask_defaults.e1cd = ((uint64_t)ecx << 32) | edx;
+	}
+
+	if ((levelling_caps & LCAP_7ab0) == LCAP_7ab0) {
+		uint32_t eax, ebx, tmp;
+
+		cpuid(0x00000007, &eax, &ebx, &tmp, &tmp);
+
+		if (~(opt_cpuid_mask_l7s0_eax & opt_cpuid_mask_l7s0_ebx)) {
+			eax &= opt_cpuid_mask_l7s0_eax;
+			ebx &= opt_cpuid_mask_l7s0_ebx;
+		}
+
+		cpuidmask_defaults._7ab0 &= ((uint64_t)eax << 32) | ebx;
+	}
+
+	if ((levelling_caps & LCAP_6c) == LCAP_6c) {
+		uint32_t ecx = cpuid_ecx(6);
+
+		if (~opt_cpuid_mask_thermal_ecx)
+			ecx &= opt_cpuid_mask_thermal_ecx;
+
+		cpuidmask_defaults._6c &= (~0ULL << 32) | ecx;
+	}
+
+	if (opt_cpu_info) {
+		printk(XENLOG_INFO "Levelling caps: %#x\n", levelling_caps);
+		printk(XENLOG_INFO
+		       "MSR defaults: 1d 0x%08x, 1c 0x%08x, e1d 0x%08x, "
+		       "e1c 0x%08x, 7a0 0x%08x, 7b0 0x%08x, 6c 0x%08x\n",
+		       (uint32_t)cpuidmask_defaults._1cd,
+		       (uint32_t)(cpuidmask_defaults._1cd >> 32),
+		       (uint32_t)cpuidmask_defaults.e1cd,
+		       (uint32_t)(cpuidmask_defaults.e1cd >> 32),
+		       (uint32_t)(cpuidmask_defaults._7ab0 >> 32),
+		       (uint32_t)cpuidmask_defaults._7ab0,
+		       (uint32_t)cpuidmask_defaults._6c);
+	}
+
+	if (levelling_caps)
+		ctxt_switch_levelling = amd_ctxt_switch_levelling;
 }
 
 /*
@@ -235,21 +402,6 @@ int cpu_has_amd_erratum(const struct cpuinfo_x86 *cpu, int osvw_id, ...)
 	return 0;
 }
 
-/* Can this system suffer from TSC drift due to C1 clock ramping? */
-static int c1_ramping_may_cause_clock_drift(struct cpuinfo_x86 *c) 
-{ 
-	if (cpuid_edx(0x80000007) & (1<<8)) {
-		/*
-		 * CPUID.AdvPowerMgmtInfo.TscInvariant
-		 * EDX bit 8, 8000_0007
-		 * Invariant TSC on 8th Gen or newer, use it
-		 * (assume all cores have invariant TSC)
-		 */
-		return 0;
-	}
-	return 1;
-}
-
 /*
  * Disable C1-Clock ramping if enabled in PMM7.CpuLowPwrEnh on 8th-generation
  * cores only. Assume BIOS has setup all Northbridges equivalently.
@@ -272,8 +424,6 @@ static void disable_c1_ramping(void)
 		printk ("AMD: Disabling C1 Clock Ramping Node #%x\n", node);
 	}
 }
-
-int force_mwait __cpuinitdata;
 
 static void disable_c1e(void *unused)
 {
@@ -324,9 +474,8 @@ static void check_syscfg_dram_mod_en(void)
 	wrmsrl(MSR_K8_SYSCFG, syscfg);
 }
 
-static void __devinit amd_get_topology(struct cpuinfo_x86 *c)
+static void amd_get_topology(struct cpuinfo_x86 *c)
 {
-#ifdef CONFIG_X86_HT
         int cpu;
         unsigned bits;
 
@@ -364,10 +513,17 @@ static void __devinit amd_get_topology(struct cpuinfo_x86 *c)
                                                          "Core",
                        cpu_has(c, X86_FEATURE_TOPOEXT) ? c->compute_unit_id :
                                                          c->cpu_core_id);
-#endif
 }
 
-static void __devinit init_amd(struct cpuinfo_x86 *c)
+static void early_init_amd(struct cpuinfo_x86 *c)
+{
+	if (c == &boot_cpu_data)
+		amd_init_levelling();
+
+	amd_ctxt_switch_levelling(NULL);
+}
+
+static void init_amd(struct cpuinfo_x86 *c)
 {
 	u32 l, h;
 
@@ -386,14 +542,11 @@ static void __devinit init_amd(struct cpuinfo_x86 *c)
 	}
 
 	/*
-	 *	FIXME: We should handle the K5 here. Set up the write
-	 *	range and also turn on MSR 83 bits 4 and 31 (write alloc,
-	 *	no bus pipeline)
+	 * Some AMD CPUs duplicate the 3DNow bit in base and extended CPUID
+	 * leaves.  Unfortunately, this aliases PBE on Intel CPUs. Clobber the
+	 * alias, leaving 3DNow in the extended leaf.
 	 */
-
-	/* Bit 31 in normal CPUID used for nonstandard 3DNow ID;
-	   3DNow is IDd by bit 31 in extended CPUID (1*32+31) anyway */
-	clear_bit(0*32+31, c->x86_capability);
+	__clear_bit(X86_FEATURE_PBE, c->x86_capability);
 	
 	if (c->x86 == 0xf && c->x86_model < 0x14
 	    && cpu_has(c, X86_FEATURE_LAHF_LM)) {
@@ -402,12 +555,59 @@ static void __devinit init_amd(struct cpuinfo_x86 *c)
 		 * revision D (model = 0x14) and later actually support it.
 		 * (AMD Erratum #110, docId: 25759).
 		 */
-		unsigned int lo, hi;
+		__clear_bit(X86_FEATURE_LAHF_LM, c->x86_capability);
+		if (!rdmsr_amd_safe(0xc001100d, &l, &h))
+			wrmsr_amd_safe(0xc001100d, l, h & ~1);
+	}
 
-		clear_bit(X86_FEATURE_LAHF_LM, c->x86_capability);
-		if (!rdmsr_amd_safe(0xc001100d, &lo, &hi)) {
-			hi &= ~1;
-			wrmsr_amd_safe(0xc001100d, lo, hi);
+	/*
+	 * Attempt to set lfence to be Dispatch Serialising.  This MSR almost
+	 * certainly isn't virtualised (and Xen at least will leak the real
+	 * value in but silently discard writes), as well as being per-core
+	 * rather than per-thread, so do a full safe read/write/readback cycle
+	 * in the worst case.
+	 */
+	if (c->x86 == 0x0f || c->x86 == 0x11)
+		/* Always dispatch serialising on this hardare. */
+		__set_bit(X86_FEATURE_LFENCE_DISPATCH, c->x86_capability);
+	else /* Implicily "== 0x10 || >= 0x12" by being 64bit. */ {
+		if (rdmsr_safe(MSR_AMD64_DE_CFG, value))
+			/* Unable to read.  Assume the safer default. */
+			__clear_bit(X86_FEATURE_LFENCE_DISPATCH,
+				    c->x86_capability);
+		else if (value & AMD64_DE_CFG_LFENCE_SERIALISE)
+			/* Already dispatch serialising. */
+			__set_bit(X86_FEATURE_LFENCE_DISPATCH,
+				  c->x86_capability);
+		else if (wrmsr_safe(MSR_AMD64_DE_CFG,
+				    value | AMD64_DE_CFG_LFENCE_SERIALISE) ||
+			 rdmsr_safe(MSR_AMD64_DE_CFG, value) ||
+			 !(value & AMD64_DE_CFG_LFENCE_SERIALISE))
+			/* Attempt to set failed.  Assume the safer default. */
+			__clear_bit(X86_FEATURE_LFENCE_DISPATCH,
+				    c->x86_capability);
+		else
+			/* Successfully enabled! */
+			__set_bit(X86_FEATURE_LFENCE_DISPATCH,
+				  c->x86_capability);
+	}
+
+	/*
+	 * If the user has explicitly chosen to disable Memory Disambiguation
+	 * to mitigiate Speculative Store Bypass, poke the appropriate MSR.
+	 */
+	if (opt_ssbd) {
+		int bit = -1;
+
+		switch (c->x86) {
+		case 0x15: bit = 54; break;
+		case 0x16: bit = 33; break;
+		case 0x17: bit = 10; break;
+		}
+
+		if (bit >= 0 && !rdmsr_safe(MSR_AMD64_LS_CFG, value)) {
+			value |= 1ull << bit;
+			wrmsr_safe(MSR_AMD64_LS_CFG, value);
 		}
 	}
 
@@ -422,17 +622,17 @@ static void __devinit init_amd(struct cpuinfo_x86 *c)
 
 	display_cacheinfo(c);
 
-	if (cpuid_eax(0x80000000) >= 0x80000008) {
+	if (c->extended_cpuid_level >= 0x80000008) {
 		c->x86_max_cores = (cpuid_ecx(0x80000008) & 0xff) + 1;
 	}
 
-	if (cpuid_eax(0x80000000) >= 0x80000007) {
-		c->x86_power = cpuid_edx(0x80000007);
-		if (c->x86_power & (1<<8)) {
-			set_bit(X86_FEATURE_CONSTANT_TSC, c->x86_capability);
-			set_bit(X86_FEATURE_NONSTOP_TSC, c->x86_capability);
+	if (c->extended_cpuid_level >= 0x80000007) {
+		if (cpu_has(c, X86_FEATURE_ITSC)) {
+			__set_bit(X86_FEATURE_CONSTANT_TSC, c->x86_capability);
+			__set_bit(X86_FEATURE_NONSTOP_TSC, c->x86_capability);
 			if (c->x86 != 0x11)
-				set_bit(X86_FEATURE_TSC_RELIABLE, c->x86_capability);
+				__set_bit(X86_FEATURE_TSC_RELIABLE,
+					  c->x86_capability);
 		}
 	}
 
@@ -445,7 +645,7 @@ static void __devinit init_amd(struct cpuinfo_x86 *c)
 		wrmsr_safe(MSR_K8_EXT_FEATURE_MASK, value);
 		rdmsrl(MSR_K8_EXT_FEATURE_MASK, value);
 		if (value & (1ULL << 54)) {
-			set_bit(X86_FEATURE_TOPOEXT, c->x86_capability);
+			__set_bit(X86_FEATURE_TOPOEXT, c->x86_capability);
 			printk(KERN_INFO "CPU: Re-enabling disabled "
 			       "Topology Extensions Support\n");
 		}
@@ -462,8 +662,8 @@ static void __devinit init_amd(struct cpuinfo_x86 *c)
         amd_get_topology(c);
 
 	/* Pointless to use MWAIT on Family10 as it does not deep sleep. */
-	if (c->x86 >= 0x10 && !force_mwait)
-		clear_bit(X86_FEATURE_MWAIT, c->x86_capability);
+	if (c->x86 == 0x10)
+		__clear_bit(X86_FEATURE_MONITOR, c->x86_capability);
 
 	if (!cpu_has_amd_erratum(c, AMD_ERRATUM_121))
 		opt_allow_unsafe = 1;
@@ -510,10 +710,22 @@ static void __devinit init_amd(struct cpuinfo_x86 *c)
 				       smp_processor_id());
 			wrmsrl(MSR_AMD64_LS_CFG, value | (1 << 15));
 		}
+	} else if (c->x86 == 0x12) {
+		rdmsrl(MSR_AMD64_DE_CFG, value);
+		if (!(value & (1U << 31))) {
+			static bool_t warned;
+
+			if (c == &boot_cpu_data || opt_cpu_info ||
+			    !test_and_set_bool(warned))
+				printk(KERN_WARNING
+				       "CPU%u: Applying workaround for erratum 665\n",
+				       smp_processor_id());
+			wrmsrl(MSR_AMD64_DE_CFG, value | (1U << 31));
+		}
 	}
 
 	/* AMD CPUs do not support SYSENTER outside of legacy mode. */
-	clear_bit(X86_FEATURE_SEP, c->x86_capability);
+	__clear_bit(X86_FEATURE_SEP, c->x86_capability);
 
 	if (c->x86 == 0x10) {
 		/* do this for boot cpu */
@@ -539,7 +751,7 @@ static void __devinit init_amd(struct cpuinfo_x86 *c)
 	 * running in deep C states.
 	 */
 	if ( opt_arat && c->x86 > 0x11 )
-		set_bit(X86_FEATURE_ARAT, c->x86_capability);
+		__set_bit(X86_FEATURE_ARAT, c->x86_capability);
 
 	/*
 	 * Prior to Family 0x14, perf counters are not reset during warm reboot.
@@ -552,24 +764,23 @@ static void __devinit init_amd(struct cpuinfo_x86 *c)
 		wrmsrl(MSR_K7_PERFCTR3, 0);
 	}
 
-	if (cpuid_edx(0x80000007) & (1 << 10)) {
+	if (cpu_has(c, X86_FEATURE_EFRO)) {
 		rdmsr(MSR_K7_HWCR, l, h);
 		l |= (1 << 27); /* Enable read-only APERF/MPERF bit */
 		wrmsr(MSR_K7_HWCR, l, h);
 	}
 
 	/* Prevent TSC drift in non single-processor, single-core platforms. */
-	if ((smp_processor_id() == 1) && c1_ramping_may_cause_clock_drift(c))
+	if ((smp_processor_id() == 1) && !cpu_has(c, X86_FEATURE_ITSC))
 		disable_c1_ramping();
-
-	set_cpuidmask(c);
 
 	check_syscfg_dram_mod_en();
 }
 
-static struct cpu_dev amd_cpu_dev __cpuinitdata = {
+static const struct cpu_dev amd_cpu_dev = {
 	.c_vendor	= "AMD",
 	.c_ident 	= { "AuthenticAMD" },
+	.c_early_init	= early_init_amd,
 	.c_init		= init_amd,
 };
 

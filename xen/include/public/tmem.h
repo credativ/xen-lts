@@ -95,6 +95,12 @@
 #define EFROZEN                 1000
 #define EEMPTY                  1001
 
+struct xen_tmem_oid {
+    uint64_t oid[3];
+};
+
+typedef struct xen_tmem_oid xen_tmem_oid_t;
+DEFINE_XEN_GUEST_HANDLE(xen_tmem_oid_t);
 
 #ifndef __ASSEMBLY__
 #if __XEN_INTERFACE_VERSION__ < 0x00040400
@@ -132,11 +138,6 @@ struct tmem_op {
 typedef struct tmem_op tmem_op_t;
 DEFINE_XEN_GUEST_HANDLE(tmem_op_t);
 
-struct tmem_handle {
-    uint32_t pool_id;
-    uint32_t index;
-    uint64_t oid[3];
-};
 #endif
 
 #endif /* __XEN_PUBLIC_TMEM_H__ */

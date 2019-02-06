@@ -480,7 +480,7 @@ static const struct microcode_ops microcode_amd_ops = {
     .start_update                     = start_update,
 };
 
-static __init int microcode_init_amd(void)
+int __init microcode_init_amd(void)
 {
     if ( boot_cpu_data.x86_vendor == X86_VENDOR_AMD )
         microcode_ops = &microcode_amd_ops;

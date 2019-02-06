@@ -232,6 +232,10 @@ struct paging_vcpu {
 typedef xen_domctl_cpuid_t cpuid_input_t;
 
 #define MAX_NESTEDP2M 10
+
+#define MAX_ALTP2M      10 /* arbitrary */
+#define INVALID_ALTP2M  0xffff
+#define MAX_EPTP        (PAGE_SIZE / sizeof(uint64_t))
 struct p2m_domain;
 struct time_scale {
     int shift;
@@ -251,6 +255,8 @@ struct pv_domain
 
     /* map_domain_page() mapping cache. */
     struct mapcache_domain mapcache;
+
+    struct cpuidmasks *cpuidmasks;
 };
 
 struct arch_domain
@@ -307,6 +313,35 @@ struct arch_domain
         RELMEM_done,
     } relmem;
     struct page_list_head relmem_list;
+
+
+    /* altp2m: allow multiple copies of host p2m */
+    bool_t altp2m_active;
+    struct p2m_domain *altp2m_p2m[MAX_ALTP2M];
+    mm_lock_t altp2m_list_lock;
+    uint64_t *altp2m_eptp;
+
+    /* Is PHYSDEVOP_eoi to automatically unmask the event channel? */
+    bool_t auto_unmask;
+
+    /* Values snooped from updates to cpuids[] (below). */
+    u8 x86;                  /* CPU family */
+    u8 x86_vendor;           /* CPU vendor */
+    u8 x86_model;            /* CPU model */
+    /*
+     * The width of the FIP/FDP register in the FPU that needs to be
+     * saved/restored during a context switch.  This is needed because
+     * the FPU can either: a) restore the 64-bit FIP/FDP and clear FCS
+     * and FDS; or b) restore the 32-bit FIP/FDP (clearing the upper
+     * 32-bits of FIP/FDP) and restore FCS/FDS.
+     *
+     * Which one is needed depends on the guest.
+     *
+     * This can be either: 8, 4 or 0.  0 means auto-detect the size
+     * based on the width of FIP/FDP values that are written by the
+     * guest.
+     */
+    uint8_t x87_fip_width;
 
     cpuid_input_t *cpuids;
 

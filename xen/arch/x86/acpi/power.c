@@ -29,6 +29,7 @@
 #include <asm/tboot.h>
 #include <asm/apic.h>
 #include <asm/io_apic.h>
+#include <asm/spec_ctrl.h>
 #include <acpi/cpufreq/cpufreq.h>
 
 uint32_t system_reset_counter = 1;
@@ -130,6 +131,7 @@ static int enter_state(u32 state)
 {
     unsigned long flags;
     int error;
+    struct cpu_info *ci;
     unsigned long cr4;
 
     if ( (state <= ACPI_STATE_S0) || (state > ACPI_S_STATES_MAX) )
@@ -169,8 +171,14 @@ static int enter_state(u32 state)
     {
         printk(XENLOG_ERR "Some devices failed to power down.");
         system_state = SYS_STATE_resume;
+        console_end_sync();
         goto done;
     }
+
+    ci = get_cpu_info();
+    spec_ctrl_enter_idle(ci);
+    /* Avoid NMI/#MC using MSR_SPEC_CTRL until we've reloaded microcode. */
+    ci->spec_ctrl_flags &= ~SCF_ist_wrmsr;
 
     ACPI_FLUSH_CPU_CACHE();
 
@@ -194,8 +202,7 @@ static int enter_state(u32 state)
     /* Restore CR4 and EFER from cached values. */
     cr4 = read_cr4();
     write_cr4(cr4 & ~X86_CR4_MCE);
-    if ( cpu_has_efer )
-        write_efer(read_efer());
+    write_efer(read_efer());
 
     device_power_up();
 
@@ -207,17 +214,23 @@ static int enter_state(u32 state)
     if ( (state == ACPI_STATE_S3) && error )
         tboot_s3_error(error);
 
+    console_end_sync();
+
+    microcode_resume_cpu(0);
+
+    /* Re-enabled default NMI/#MC use of MSR_SPEC_CTRL. */
+    ci->spec_ctrl_flags |= (default_spec_ctrl_flags & SCF_ist_wrmsr);
+    spec_ctrl_exit_idle(ci);
+
  done:
     spin_debug_enable();
     local_irq_restore(flags);
-    console_end_sync();
     acpi_sleep_post(state);
     if ( hvm_cpu_up() )
         BUG();
+    cpufreq_add_cpu(0);
 
  enable_cpu:
-    cpufreq_add_cpu(0);
-    microcode_resume_cpu(0);
     rcu_barrier();
     mtrr_aps_sync_begin();
     enable_nonboot_cpus();

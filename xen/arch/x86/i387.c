@@ -258,10 +258,8 @@ static bool_t _vcpu_save_fpu(struct vcpu *v)
 
     if ( cpu_has_xsave )
         fpu_xsave(v);
-    else if ( cpu_has_fxsr )
-        fpu_fxsave(v);
     else
-        fpu_fsave(v);
+        fpu_fxsave(v);
 
     v->fpu_dirtied = 0;
 

@@ -44,7 +44,6 @@ typedef struct {
 } EFI_SHIM_LOCK_PROTOCOL;
 
 extern char start[];
-extern u32 cpuid_ext_features;
 
 union string {
     CHAR16 *w;

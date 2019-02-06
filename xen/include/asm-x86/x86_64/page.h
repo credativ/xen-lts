@@ -138,6 +138,7 @@ typedef l4_pgentry_t root_pgentry_t;
       : (((_s) < ROOT_PAGETABLE_FIRST_XEN_SLOT) ||  \
          ((_s) > ROOT_PAGETABLE_LAST_XEN_SLOT)))
 
+#define root_table_offset         l4_table_offset
 #define root_get_pfn              l4e_get_pfn
 #define root_get_flags            l4e_get_flags
 #define root_get_intpte           l4e_get_intpte
@@ -161,9 +162,6 @@ typedef l4_pgentry_t root_pgentry_t;
 /* Bit 22 of a 24-bit flag mask. This corresponds to bit 62 of a pte.*/
 #define _PAGE_GNTTAB (1U<<22)
 
-#define PAGE_HYPERVISOR         (__PAGE_HYPERVISOR         | _PAGE_GLOBAL)
-#define PAGE_HYPERVISOR_NOCACHE (__PAGE_HYPERVISOR_NOCACHE | _PAGE_GLOBAL)
-
 #define USER_MAPPINGS_ARE_GLOBAL
 #ifdef USER_MAPPINGS_ARE_GLOBAL
 
@@ -182,6 +180,28 @@ typedef l4_pgentry_t root_pgentry_t;
  * and is only used for signalling in variables that contain flags.
  */
 #define _PAGE_INVALID_BIT (1U<<24)
+
+/*
+ * Bit 12 of a 24-bit flag mask. This corresponds to bit 52 of a pte.
+ * This is needed to distinguish between user and kernel PTEs since _PAGE_USER
+ * is asserted for both.
+ */
+#define _PAGE_GUEST_KERNEL (1U<<12)
+
+#define PAGE_HYPERVISOR_RO      (__PAGE_HYPERVISOR_RO      | _PAGE_GLOBAL)
+#define PAGE_HYPERVISOR_RW      (__PAGE_HYPERVISOR_RW      | _PAGE_GLOBAL)
+#define PAGE_HYPERVISOR_RX      (__PAGE_HYPERVISOR_RX      | _PAGE_GLOBAL)
+#define PAGE_HYPERVISOR_RWX     (__PAGE_HYPERVISOR         | _PAGE_GLOBAL)
+
+#ifdef __ASSEMBLY__
+/* Dependency on NX being available can't be expressed. */
+# define PAGE_HYPERVISOR         PAGE_HYPERVISOR_RWX
+# define PAGE_HYPERVISOR_NOCACHE (__PAGE_HYPERVISOR_NOCACHE | _PAGE_GLOBAL)
+#else
+# define PAGE_HYPERVISOR         PAGE_HYPERVISOR_RW
+# define PAGE_HYPERVISOR_NOCACHE (__PAGE_HYPERVISOR_NOCACHE | \
+                                  _PAGE_GLOBAL | _PAGE_NX)
+#endif
 
 #endif /* __X86_64_PAGE_H__ */
 

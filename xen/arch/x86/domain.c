@@ -61,6 +61,7 @@
 #include <xen/numa.h>
 #include <xen/iommu.h>
 #include <compat/vcpu.h>
+#include <asm/spec_ctrl.h>
 
 DEFINE_PER_CPU(struct vcpu *, curr_vcpu);
 DEFINE_PER_CPU(unsigned long, cr4);
@@ -1495,6 +1496,7 @@ static void __context_switch(void)
 void context_switch(struct vcpu *prev, struct vcpu *next)
 {
     unsigned int cpu = smp_processor_id();
+    const struct domain *prevd = prev->domain, *nextd = next->domain;
     cpumask_t dirty_mask;
 
     ASSERT(local_irq_is_enabled());
@@ -1508,6 +1510,9 @@ void context_switch(struct vcpu *prev, struct vcpu *next)
         /* Other cpus call __sync_local_execstate from flush ipi handler. */
         flush_tlb_mask(&dirty_mask);
     }
+
+    if ( is_hvm_domain(prevd) && !list_empty(&prev->arch.hvm_vcpu.tm_list) )
+        pt_save_timer(prev);
 
     if ( prev != next )
         _update_runstate_area(prev);
@@ -1555,6 +1560,34 @@ void context_switch(struct vcpu *prev, struct vcpu *next)
 
         set_cpuid_faulting(is_pv_vcpu(next) &&
                            (next->domain->domain_id != 0));
+
+        if ( opt_ibpb && !is_idle_domain(nextd) )
+        {
+            static DEFINE_PER_CPU(unsigned int, last);
+            unsigned int *last_id = &this_cpu(last);
+
+            /*
+             * Squash the domid and vcpu id together for comparison
+             * efficiency.  We could in principle stash and compare the struct
+             * vcpu pointer, but this risks a false alias if a domain has died
+             * and the same 4k page gets reused for a new vcpu.
+             */
+            unsigned int next_id = (((unsigned int)nextd->domain_id << 16) |
+                                    (uint16_t)next->vcpu_id);
+            BUILD_BUG_ON(MAX_VIRT_CPUS > 0xffff);
+
+            /*
+             * When scheduling from a vcpu, to idle, and back to the same vcpu
+             * (which might be common in a lightly loaded system, or when
+             * using vcpu pinning), there is no need to issue IBPB, as we are
+             * returning to the same security context.
+             */
+            if ( *last_id != next_id )
+            {
+                wrmsrl(MSR_PRED_CMD, PRED_CMD_IBPB);
+                *last_id = next_id;
+            }
+        }
     }
 
     if (is_hvm_vcpu(next) && (prev != next) )

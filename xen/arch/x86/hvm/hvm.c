@@ -825,20 +825,65 @@ static int hvm_save_cpu_ctxt(struct domain *d, hvm_domain_context_t *h)
     return 0;
 }
 
-static bool_t hvm_efer_valid(struct domain *d,
-                             uint64_t value, uint64_t efer_validbits)
+/* Return a string indicating the error, or NULL for valid. */
+const char *hvm_efer_valid(const struct vcpu *v, uint64_t value,
+                           signed int cr0_pg)
 {
-    if ( nestedhvm_enabled(d) && cpu_has_svm )
-        efer_validbits |= EFER_SVME;
+    unsigned int ext1_ecx = 0, ext1_edx = 0;
 
-    return !((value & ~efer_validbits) ||
-             ((sizeof(long) != 8) && (value & EFER_LME)) ||
-             (!cpu_has_svm && (value & EFER_SVME)) ||
-             (!cpu_has_nx && (value & EFER_NX)) ||
-             (!cpu_has_syscall && (value & EFER_SCE)) ||
-             (!cpu_has_lmsl && (value & EFER_LMSLE)) ||
-             (!cpu_has_ffxsr && (value & EFER_FFXSE)) ||
-             ((value & (EFER_LME|EFER_LMA)) == EFER_LMA));
+    if ( cr0_pg < 0 && !is_hardware_domain(v->domain) )
+    {
+        unsigned int level;
+
+        ASSERT(v->domain == current->domain);
+        hvm_cpuid(0x80000000, &level, NULL, NULL, NULL);
+        if ( (level >> 16) == 0x8000 && level > 0x80000000 )
+        {
+            unsigned int dummy;
+
+            level = 0x80000001;
+            hvm_funcs.cpuid_intercept(&level, &dummy, &ext1_ecx, &ext1_edx);
+        }
+    }
+    else
+    {
+        ext1_edx = boot_cpu_data.x86_capability[cpufeat_word(X86_FEATURE_LM)];
+        ext1_ecx = boot_cpu_data.x86_capability[cpufeat_word(X86_FEATURE_SVM)];
+    }
+
+    /*
+     * Guests may want to set EFER.SCE and EFER.LME at the same time, so we
+     * can't make the check depend on only X86_FEATURE_SYSCALL (which on VMX
+     * will be clear without the guest having entered 64-bit mode).
+     */
+    if ( (value & EFER_SCE) &&
+         !(ext1_edx & cpufeat_mask(X86_FEATURE_SYSCALL)) &&
+         (cr0_pg >= 0 || !(value & EFER_LME)) )
+        return "SCE without feature";
+
+    if ( (value & (EFER_LME | EFER_LMA)) &&
+         !(ext1_edx & cpufeat_mask(X86_FEATURE_LM)) )
+        return "LME/LMA without feature";
+
+    if ( (value & EFER_LMA) && (!(value & EFER_LME) || !cr0_pg) )
+        return "LMA/LME/CR0.PG inconsistency";
+
+    if ( (value & EFER_NX) && !(ext1_edx & cpufeat_mask(X86_FEATURE_NX)) )
+        return "NX without feature";
+
+    if ( (value & EFER_SVME) &&
+         (!(ext1_ecx & cpufeat_mask(X86_FEATURE_SVM)) ||
+          !nestedhvm_enabled(v->domain)) )
+        return "SVME without nested virt";
+
+    if ( (value & EFER_LMSLE) && !cpu_has_lmsl )
+        return "LMSLE without support";
+
+    if ( (value & EFER_FFXSE) &&
+         !(ext1_edx & cpufeat_mask(X86_FEATURE_FFXSR)) )
+        return "FFXSE without feature";
+
+    return NULL;
 }
 
 static int hvm_load_cpu_ctxt(struct domain *d, hvm_domain_context_t *h)
@@ -847,7 +892,8 @@ static int hvm_load_cpu_ctxt(struct domain *d, hvm_domain_context_t *h)
     struct vcpu *v;
     struct hvm_hw_cpu ctxt;
     struct segment_register seg;
-    uint64_t efer_validbits;
+    const char *errstr;
+    struct xsave_struct *xsave_area;
 
     /* Which vcpu is this? */
     vcpuid = hvm_load_instance(h);
@@ -858,7 +904,10 @@ static int hvm_load_cpu_ctxt(struct domain *d, hvm_domain_context_t *h)
         return -EINVAL;
     }
 
-    if ( hvm_load_entry(CPU, h, &ctxt) != 0 ) 
+    if ( hvm_load_entry_zeroextend(CPU, h, &ctxt) != 0 )
+        return -EINVAL;
+
+    if ( ctxt.pad0 != 0 )
         return -EINVAL;
 
     /* Sanity check some control registers. */
@@ -878,12 +927,18 @@ static int hvm_load_cpu_ctxt(struct domain *d, hvm_domain_context_t *h)
         return -EINVAL;
     }
 
-    efer_validbits = EFER_FFXSE | EFER_LMSLE | EFER_LME | EFER_LMA
-                   | EFER_NX | EFER_SCE;
-    if ( !hvm_efer_valid(d, ctxt.msr_efer, efer_validbits) )
+    errstr = hvm_efer_valid(v, ctxt.msr_efer, MASK_EXTR(ctxt.cr0, X86_CR0_PG));
+    if ( errstr )
     {
-        printk(XENLOG_G_ERR "HVM%d restore: bad EFER %#" PRIx64 "\n",
-               d->domain_id, ctxt.msr_efer);
+        printk(XENLOG_G_ERR "%pv: HVM restore: bad EFER %#" PRIx64 " - %s\n",
+               v, ctxt.msr_efer, errstr);
+        return -EINVAL;
+    }
+
+    if ( (ctxt.flags & ~XEN_X86_FPU_INITIALISED) != 0 )
+    {
+        gprintk(XENLOG_ERR, "bad flags value in CPU context: %#x\n",
+                ctxt.flags);
         return -EINVAL;
     }
 
@@ -965,16 +1020,23 @@ static int hvm_load_cpu_ctxt(struct domain *d, hvm_domain_context_t *h)
     seg.attr.bytes = ctxt.ldtr_arbytes;
     hvm_set_segment_register(v, x86_seg_ldtr, &seg);
 
-    /* In case xsave-absent save file is restored on a xsave-capable host */
-    if ( cpu_has_xsave && !xsave_enabled(v) )
-    {
-        struct xsave_struct *xsave_area = v->arch.xsave_area;
+    /* Cover xsave-absent save file restoration on xsave-capable host. */
+    xsave_area = xsave_enabled(v) ? NULL : v->arch.xsave_area;
 
-        memcpy(v->arch.xsave_area, ctxt.fpu_regs, sizeof(ctxt.fpu_regs));
-        xsave_area->xsave_hdr.xstate_bv = XSTATE_FP_SSE;
-    }
-    else
+    v->fpu_initialised = !!(ctxt.flags & XEN_X86_FPU_INITIALISED);
+    if ( v->fpu_initialised )
+    {
         memcpy(v->arch.fpu_ctxt, ctxt.fpu_regs, sizeof(ctxt.fpu_regs));
+        if ( xsave_area )
+            xsave_area->xsave_hdr.xstate_bv = XSTATE_FP_SSE;
+    }
+    else if ( xsave_area )
+    {
+        xsave_area->xsave_hdr.xstate_bv = 0;
+        xsave_area->fpu_sse.mxcsr = MXCSR_DEFAULT;
+    }
+    if ( xsave_area )
+        xsave_area->xsave_hdr.xcomp_bv = 0;
 
     v->arch.user_regs.eax = ctxt.rax;
     v->arch.user_regs.ebx = ctxt.rbx;
@@ -1055,7 +1117,7 @@ static int hvm_load_cpu_xsave_states(struct domain *d, hvm_domain_context_t *h)
     struct vcpu *v;
     struct hvm_hw_cpu_xsave *ctxt;
     struct hvm_save_descriptor *desc;
-    unsigned int i, desc_start;
+    unsigned int i, desc_start, desc_length;
 
     /* Which vcpu is this? */
     vcpuid = hvm_load_instance(h);
@@ -1103,8 +1165,7 @@ static int hvm_load_cpu_xsave_states(struct domain *d, hvm_domain_context_t *h)
     h->cur += desc->length;
 
     err = validate_xstate(ctxt->xcr0, ctxt->xcr0_accum,
-                          ctxt->save_area.xsave_hdr.xstate_bv,
-                          ctxt->xfeature_mask);
+                          (const void *)&ctxt->save_area.xsave_hdr);
     if ( err )
     {
         printk(XENLOG_G_WARNING
@@ -1115,7 +1176,8 @@ static int hvm_load_cpu_xsave_states(struct domain *d, hvm_domain_context_t *h)
         return err;
     }
     size = HVM_CPU_XSAVE_SIZE(ctxt->xcr0_accum);
-    if ( desc->length > size )
+    desc_length = desc->length;
+    if ( desc_length > size )
     {
         /*
          * Xen 4.3.0, 4.2.3 and older used to send longer-than-needed
@@ -1135,6 +1197,23 @@ static int hvm_load_cpu_xsave_states(struct domain *d, hvm_domain_context_t *h)
         printk(XENLOG_G_WARNING
                "HVM%d.%u restore mismatch: xsave length %#x > %#x\n",
                d->domain_id, vcpuid, desc->length, size);
+        /* Rewind desc_length to ignore the extraneous zeros. */
+        desc_length = size;
+    }
+
+    if ( xsave_area_compressed((const void *)&ctxt->save_area) )
+    {
+        printk(XENLOG_G_WARNING
+               "HVM%d.%u restore: compressed xsave state not supported\n",
+               d->domain_id, vcpuid);
+        return -EOPNOTSUPP;
+    }
+    else if ( desc_length != size )
+    {
+        printk(XENLOG_G_WARNING
+               "HVM%d.%u restore mismatch: xsave length %#x != %#x\n",
+               d->domain_id, vcpuid, desc_length, size);
+        return -EINVAL;
     }
     /* Checking finished */
 
@@ -1142,9 +1221,8 @@ static int hvm_load_cpu_xsave_states(struct domain *d, hvm_domain_context_t *h)
     v->arch.xcr0_accum = ctxt->xcr0_accum;
     if ( ctxt->xcr0_accum & XSTATE_NONLAZY )
         v->arch.nonlazy_xstate_used = 1;
-    memcpy(v->arch.xsave_area, &ctxt->save_area,
-           min(desc->length, size) - offsetof(struct hvm_hw_cpu_xsave,
-           save_area));
+    compress_xsave_states(v, &ctxt->save_area,
+                          size - offsetof(struct hvm_hw_cpu_xsave, save_area));
 
     return 0;
 }
@@ -1655,15 +1733,16 @@ err:
 int hvm_set_efer(uint64_t value)
 {
     struct vcpu *v = current;
-    uint64_t efer_validbits;
+    const char *errstr;
 
     value &= ~EFER_LMA;
 
-    efer_validbits = EFER_FFXSE | EFER_LMSLE | EFER_LME | EFER_NX | EFER_SCE;
-    if ( !hvm_efer_valid(v->domain, value, efer_validbits) )
+    errstr = hvm_efer_valid(v, value, -1);
+    if ( errstr )
     {
-        gdprintk(XENLOG_WARNING, "Trying to set reserved bit in "
-                 "EFER: %#"PRIx64"\n", value);
+        printk(XENLOG_G_WARNING
+               "%pv: Invalid EFER update: %#"PRIx64" -> %#"PRIx64" - %s\n",
+               v, v->arch.hvm_vcpu.guest_efer, value, errstr);
         hvm_inject_hw_exception(TRAP_gp_fault, 0);
         return X86EMUL_EXCEPTION;
     }
@@ -1675,6 +1754,30 @@ int hvm_set_efer(uint64_t value)
                  "Trying to change EFER.LME with paging enabled\n");
         hvm_inject_hw_exception(TRAP_gp_fault, 0);
         return X86EMUL_EXCEPTION;
+    }
+
+    if ( (value & EFER_LME) && !(v->arch.hvm_vcpu.guest_efer & EFER_LME) )
+    {
+        struct segment_register cs;
+
+        hvm_get_segment_register(v, x86_seg_cs, &cs);
+
+        /*
+         * %cs may be loaded with both .D and .L set in legacy mode, and both
+         * are captured in the VMCS/VMCB.
+         *
+         * If a guest does this and then tries to transition into long mode,
+         * the vmentry from setting LME fails due to invalid guest state,
+         * because %cr0.PG is still clear.
+         *
+         * When LME becomes set, clobber %cs.L to keep the guest firmly in
+         * compatibility mode until it reloads %cs itself.
+         */
+        if ( cs.attr.fields.l )
+        {
+            cs.attr.fields.l = 0;
+            hvm_set_segment_register(v, x86_seg_cs, &cs);
+        }
     }
 
     if ( nestedhvm_enabled(v->domain) && cpu_has_svm &&

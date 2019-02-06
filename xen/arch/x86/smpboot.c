@@ -16,8 +16,7 @@
  * GNU General Public License for more details.
  * 
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program; If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <xen/config.h>
@@ -25,6 +24,7 @@
 #include <xen/kernel.h>
 #include <xen/mm.h>
 #include <xen/domain.h>
+#include <xen/domain_page.h>
 #include <xen/sched.h>
 #include <xen/sched-if.h>
 #include <xen/irq.h>
@@ -41,6 +41,7 @@
 #include <asm/flushtlb.h>
 #include <asm/msr.h>
 #include <asm/mtrr.h>
+#include <asm/spec_ctrl.h>
 #include <asm/time.h>
 #include <asm/tboot.h>
 #include <mach_apic.h>
@@ -58,6 +59,10 @@ DEFINE_PER_CPU_READ_MOSTLY(cpumask_var_t, cpu_core_mask);
 
 cpumask_t cpu_online_map __read_mostly;
 EXPORT_SYMBOL(cpu_online_map);
+
+unsigned int __read_mostly nr_sockets;
+cpumask_t **__read_mostly socket_cpumask;
+static cpumask_t *secondary_socket_cpumask;
 
 struct cpuinfo_x86 cpu_data[NR_CPUS];
 
@@ -77,46 +82,23 @@ static enum cpu_state {
 
 void *stack_base[NR_CPUS];
 
+void initialize_cpu_data(unsigned int cpu)
+{
+    cpu_data[cpu] = boot_cpu_data;
+}
+
 static void smp_store_cpu_info(int id)
 {
-    struct cpuinfo_x86 *c = cpu_data + id;
+    unsigned int socket;
 
-    *c = boot_cpu_data;
-    if ( id != 0 )
-        identify_cpu(c);
+    identify_cpu(&cpu_data[id]);
 
-    /*
-     * Certain Athlons might work (for various values of 'work') in SMP
-     * but they are not certified as MP capable.
-     */
-    if ( (c->x86_vendor == X86_VENDOR_AMD) && (c->x86 == 6) )
+    socket = cpu_to_socket(id);
+    if ( !socket_cpumask[socket] )
     {
-        /* Athlon 660/661 is valid. */ 
-        if ( (c->x86_model==6) && ((c->x86_mask==0) || (c->x86_mask==1)) )
-            goto valid_k7;
-
-        /* Duron 670 is valid */
-        if ( (c->x86_model==7) && (c->x86_mask==0) )
-            goto valid_k7;
-
-        /*
-         * Athlon 662, Duron 671, and Athlon >model 7 have capability bit.
-         * It's worth noting that the A5 stepping (662) of some Athlon XP's
-         * have the MP bit set.
-         * See http://www.heise.de/newsticker/data/jow-18.10.01-000 for more.
-         */
-        if ( ((c->x86_model==6) && (c->x86_mask>=2)) ||
-             ((c->x86_model==7) && (c->x86_mask>=1)) ||
-             (c->x86_model> 7) )
-            if (cpu_has_mp)
-                goto valid_k7;
-
-        /* If we get here, it's not a certified SMP capable AMD system. */
-        add_taint(TAINT_UNSAFE_SMP);
+        socket_cpumask[socket] = secondary_socket_cpumask;
+        secondary_socket_cpumask = NULL;
     }
-
- valid_k7:
-    ;
 }
 
 /*
@@ -142,7 +124,7 @@ static void synchronize_tsc_master(unsigned int slave)
 
     for ( i = 1; i <= 5; i++ )
     {
-        rdtscll(tsc_value);
+        tsc_value = rdtsc();
         wmb();
         atomic_inc(&tsc_count);
         while ( atomic_read(&tsc_count) != (i<<1) )
@@ -244,6 +226,8 @@ static void set_cpu_sibling_map(int cpu)
 
     cpumask_set_cpu(cpu, &cpu_sibling_setup_map);
 
+    cpumask_set_cpu(cpu, socket_cpumask[cpu_to_socket(cpu)]);
+
     if ( c[cpu].x86_num_siblings > 1 )
     {
         for_each_cpu ( i, &cpu_sibling_setup_map )
@@ -303,21 +287,6 @@ static void set_cpu_sibling_map(int cpu)
     }
 }
 
-static void construct_percpu_idt(unsigned int cpu)
-{
-    unsigned char idt_load[10];
-
-    *(unsigned short *)(&idt_load[0]) = (IDT_ENTRIES*sizeof(idt_entry_t))-1;
-    *(unsigned long  *)(&idt_load[2]) = (unsigned long)idt_tables[cpu];
-    __asm__ __volatile__ ( "lidt %0" : "=m" (idt_load) );
-
-    set_ist(&idt_tables[cpu][TRAP_double_fault],  IST_DF);
-    set_ist(&idt_tables[cpu][TRAP_nmi],	      IST_NMI);
-    set_ist(&idt_tables[cpu][TRAP_machine_check], IST_MCE);
-    set_ist(&idt_tables[cpu][TRAP_debug],         IST_DB);
-
-}
-
 void start_secondary(void *unused)
 {
     /*
@@ -326,12 +295,13 @@ void start_secondary(void *unused)
      */
     unsigned int cpu = booting_cpu;
 
+    /* Critical region without IDT or TSS.  Any fault is deadly! */
+
     set_processor_id(cpu);
     set_current(idle_vcpu[cpu]);
     this_cpu(curr_vcpu) = idle_vcpu[cpu];
-    if ( cpu_has_efer )
-        rdmsrl(MSR_EFER, this_cpu(efer));
-    asm volatile ( "mov %%cr4,%0" : "=r" (this_cpu(cr4)) );
+    rdmsrl(MSR_EFER, this_cpu(efer));
+    init_shadow_spec_ctrl_state();
 
     /*
      * Just as during early bootstrap, it is convenient here to disable
@@ -351,17 +321,39 @@ void start_secondary(void *unused)
      */
     spin_debug_disable();
 
+    get_cpu_info()->use_pv_cr3 = 0;
+    get_cpu_info()->xen_cr3 = 0;
+    get_cpu_info()->pv_cr3 = 0;
+
+    load_system_tables();
+
+    /* Full exception support from here on in. */
+
+    /* Safe to enable feature such as CR4.MCE with the IDT set up now. */
+    write_cr4(mmu_cr4_features);
+
     percpu_traps_init();
+
+    init_percpu_time();
 
     cpu_init();
 
-    smp_callin();
+    initialize_cpu_data(cpu);
+
+    if ( system_state <= SYS_STATE_smp_boot )
+        early_microcode_update_cpu(0);
+    else
+        microcode_resume_cpu(cpu);
 
     /*
-     * At this point, boot CPU has fully initialised the IDT. It is
-     * now safe to make ourselves a private copy.
+     * If MSR_SPEC_CTRL is available, apply Xen's default setting and discard
+     * any firmware settings.  Note: MSR_SPEC_CTRL may only become available
+     * after loading microcode.
      */
-    construct_percpu_idt(cpu);
+    if ( boot_cpu_has(X86_FEATURE_IBRSB) )
+        wrmsrl(MSR_SPEC_CTRL, default_xen_spec_ctrl);
+
+    smp_callin();
 
     setup_secondary_APIC_clock();
 
@@ -383,17 +375,13 @@ void start_secondary(void *unused)
      * this lock ensures we don't half assign or remove an irq from a cpu.
      */
     lock_vector_lock();
-    __setup_vector_irq(cpu);
+    setup_vector_irq(cpu);
     cpumask_set_cpu(cpu, &cpu_online_map);
     unlock_vector_lock();
-
-    init_percpu_time();
 
     /* We can take interrupts now: we're officially "up". */
     local_irq_enable();
     mtrr_ap_init();
-
-    microcode_resume_cpu(cpu);
 
     wmb();
     startup_cpu_idle_loop();
@@ -404,17 +392,17 @@ extern void *stack_start;
 static int wakeup_secondary_cpu(int phys_apicid, unsigned long start_eip)
 {
     unsigned long send_status = 0, accept_status = 0;
-    int maxlvt, timeout, num_starts, i;
+    int maxlvt, timeout, i;
 
     /*
      * Be paranoid about clearing APIC errors.
      */
-    if ( APIC_INTEGRATED(apic_version[phys_apicid]) )
-    {
-        apic_read_around(APIC_SPIV);
-        apic_write(APIC_ESR, 0);
-        apic_read(APIC_ESR);
-    }
+    if ( !APIC_INTEGRATED(apic_version[phys_apicid]) )
+        return -ENODEV;
+
+    apic_read_around(APIC_SPIV);
+    apic_write(APIC_ESR, 0);
+    apic_read(APIC_ESR);
 
     Dprintk("Asserting INIT.\n");
 
@@ -461,20 +449,9 @@ static int wakeup_secondary_cpu(int phys_apicid, unsigned long start_eip)
         udelay(10);
     }
 
-    /*
-     * Should we send STARTUP IPIs ?
-     *
-     * Determine this based on the APIC version.
-     * If we don't have an integrated APIC, don't send the STARTUP IPIs.
-     */
-    num_starts = APIC_INTEGRATED(apic_version[phys_apicid]) ? 2 : 0;
-
-    /* Run STARTUP IPI loop. */
-    Dprintk("#startup loops: %d.\n", num_starts);
-
     maxlvt = get_maxlvt();
 
-    for ( i = 0; i < num_starts; i++ )
+    for ( i = 0; i < 2; i++ )
     {
         Dprintk("Sending STARTUP #%d.\n", i+1);
         apic_read_around(APIC_SPIV);
@@ -627,18 +604,316 @@ static int do_boot_cpu(int apicid, int cpu)
     return rc;
 }
 
+#define STUB_BUF_CPU_OFFS(cpu) (((cpu) & (STUBS_PER_PAGE - 1)) * STUB_BUF_SIZE)
+
+unsigned long alloc_stub_page(unsigned int cpu, unsigned long *mfn)
+{
+    unsigned long stub_va;
+    struct page_info *pg;
+
+    BUILD_BUG_ON(STUBS_PER_PAGE & (STUBS_PER_PAGE - 1));
+
+    if ( *mfn )
+        pg = mfn_to_page(*mfn);
+    else
+    {
+        nodeid_t node = cpu_to_node(cpu);
+        unsigned int memflags = node != NUMA_NO_NODE ? MEMF_node(node) : 0;
+
+        pg = alloc_domheap_page(NULL, memflags);
+        if ( !pg )
+            return 0;
+
+        unmap_domain_page(memset(__map_domain_page(pg), 0xcc, PAGE_SIZE));
+    }
+
+    stub_va = XEN_VIRT_END - (cpu + 1) * PAGE_SIZE;
+    if ( map_pages_to_xen(stub_va, page_to_mfn(pg), 1,
+                          PAGE_HYPERVISOR_RX | MAP_SMALL_PAGES) )
+    {
+        if ( !*mfn )
+            free_domheap_page(pg);
+        stub_va = 0;
+    }
+    else if ( !*mfn )
+        *mfn = page_to_mfn(pg);
+
+    return stub_va;
+}
+
 void cpu_exit_clear(unsigned int cpu)
 {
     cpu_uninit(cpu);
     set_cpu_state(CPU_STATE_DEAD);
 }
 
+static int clone_mapping(const void *ptr, root_pgentry_t *rpt)
+{
+    unsigned long linear = (unsigned long)ptr, pfn;
+    unsigned int flags;
+    l3_pgentry_t *pl3e;
+    l2_pgentry_t *pl2e;
+    l1_pgentry_t *pl1e;
+
+    /*
+     * Sanity check 'linear'.  We only allow cloning from the Xen virtual
+     * range, and in particular, only from the directmap and .text ranges.
+     */
+    if ( root_table_offset(linear) > ROOT_PAGETABLE_LAST_XEN_SLOT ||
+         root_table_offset(linear) < ROOT_PAGETABLE_FIRST_XEN_SLOT )
+        return -EINVAL;
+
+    if ( linear < XEN_VIRT_START ||
+         (linear >= XEN_VIRT_END && linear < DIRECTMAP_VIRT_START) )
+        return -EINVAL;
+
+    pl3e = l4e_to_l3e(idle_pg_table[root_table_offset(linear)]) +
+        l3_table_offset(linear);
+
+    flags = l3e_get_flags(*pl3e);
+    ASSERT(flags & _PAGE_PRESENT);
+    if ( flags & _PAGE_PSE )
+    {
+        pfn = (l3e_get_pfn(*pl3e) & ~((1UL << (2 * PAGETABLE_ORDER)) - 1)) |
+              (PFN_DOWN(linear) & ((1UL << (2 * PAGETABLE_ORDER)) - 1));
+        flags &= ~_PAGE_PSE;
+    }
+    else
+    {
+        pl2e = l3e_to_l2e(*pl3e) + l2_table_offset(linear);
+        flags = l2e_get_flags(*pl2e);
+        ASSERT(flags & _PAGE_PRESENT);
+        if ( flags & _PAGE_PSE )
+        {
+            pfn = (l2e_get_pfn(*pl2e) & ~((1UL << PAGETABLE_ORDER) - 1)) |
+                  (PFN_DOWN(linear) & ((1UL << PAGETABLE_ORDER) - 1));
+            flags &= ~_PAGE_PSE;
+        }
+        else
+        {
+            pl1e = l2e_to_l1e(*pl2e) + l1_table_offset(linear);
+            flags = l1e_get_flags(*pl1e);
+            if ( !(flags & _PAGE_PRESENT) )
+                return 0;
+            pfn = l1e_get_pfn(*pl1e);
+        }
+    }
+
+    if ( !(root_get_flags(rpt[root_table_offset(linear)]) & _PAGE_PRESENT) )
+    {
+        pl3e = alloc_xen_pagetable();
+        if ( !pl3e )
+            return -ENOMEM;
+        clear_page(pl3e);
+        l4e_write(&rpt[root_table_offset(linear)],
+                  l4e_from_paddr(__pa(pl3e), __PAGE_HYPERVISOR));
+    }
+    else
+        pl3e = l4e_to_l3e(rpt[root_table_offset(linear)]);
+
+    pl3e += l3_table_offset(linear);
+
+    if ( !(l3e_get_flags(*pl3e) & _PAGE_PRESENT) )
+    {
+        pl2e = alloc_xen_pagetable();
+        if ( !pl2e )
+            return -ENOMEM;
+        clear_page(pl2e);
+        l3e_write(pl3e, l3e_from_paddr(__pa(pl2e), __PAGE_HYPERVISOR));
+    }
+    else
+    {
+        ASSERT(!(l3e_get_flags(*pl3e) & _PAGE_PSE));
+        pl2e = l3e_to_l2e(*pl3e);
+    }
+
+    pl2e += l2_table_offset(linear);
+
+    if ( !(l2e_get_flags(*pl2e) & _PAGE_PRESENT) )
+    {
+        pl1e = alloc_xen_pagetable();
+        if ( !pl1e )
+            return -ENOMEM;
+        clear_page(pl1e);
+        l2e_write(pl2e, l2e_from_paddr(__pa(pl1e), __PAGE_HYPERVISOR));
+    }
+    else
+    {
+        ASSERT(!(l2e_get_flags(*pl2e) & _PAGE_PSE));
+        pl1e = l2e_to_l1e(*pl2e);
+    }
+
+    pl1e += l1_table_offset(linear);
+    flags &= ~_PAGE_GLOBAL;
+
+    if ( l1e_get_flags(*pl1e) & _PAGE_PRESENT )
+    {
+        ASSERT(l1e_get_pfn(*pl1e) == pfn);
+        ASSERT(l1e_get_flags(*pl1e) == flags);
+    }
+    else
+        l1e_write(pl1e, l1e_from_pfn(pfn, flags));
+
+    return 0;
+}
+
+DEFINE_PER_CPU(root_pgentry_t *, root_pgt);
+
+static root_pgentry_t common_pgt;
+
+extern const char _stextentry[], _etextentry[];
+
+static int setup_cpu_root_pgt(unsigned int cpu)
+{
+    root_pgentry_t *rpt;
+    unsigned int off;
+    int rc;
+
+    if ( cpu_has_no_xpti )
+        return 0;
+
+    rpt = alloc_xen_pagetable();
+    if ( !rpt )
+        return -ENOMEM;
+
+    clear_page(rpt);
+    per_cpu(root_pgt, cpu) = rpt;
+
+    rpt[root_table_offset(RO_MPT_VIRT_START)] =
+        idle_pg_table[root_table_offset(RO_MPT_VIRT_START)];
+    /* SH_LINEAR_PT inserted together with guest mappings. */
+    /* PERDOMAIN inserted during context switch. */
+
+    /* One-time setup of common_pgt, which maps .text.entry and the stubs. */
+    if ( unlikely(!root_get_intpte(common_pgt)) )
+    {
+        const char *ptr;
+
+        for ( rc = 0, ptr = _stextentry;
+              !rc && ptr < _etextentry; ptr += PAGE_SIZE )
+            rc = clone_mapping(ptr, rpt);
+
+        if ( rc )
+            return rc;
+
+        common_pgt = rpt[root_table_offset(XEN_VIRT_START)];
+    }
+
+    rpt[root_table_offset(XEN_VIRT_START)] = common_pgt;
+
+    /* Install direct map page table entries for stack, IDT, and TSS. */
+    for ( off = rc = 0; !rc && off < STACK_SIZE; off += PAGE_SIZE )
+        if ( !memguard_is_stack_guard_page(off) )
+            rc = clone_mapping(__va(__pa(stack_base[cpu])) + off, rpt);
+
+    if ( !rc )
+        rc = clone_mapping(idt_tables[cpu], rpt);
+    if ( !rc )
+        rc = clone_mapping(&per_cpu(init_tss, cpu), rpt);
+    if ( !rc )
+        rc = clone_mapping((void *)per_cpu(stubs.addr, cpu), rpt);
+
+    return rc;
+}
+
+static void cleanup_cpu_root_pgt(unsigned int cpu)
+{
+    root_pgentry_t *rpt = per_cpu(root_pgt, cpu);
+    unsigned int r;
+    unsigned long stub_linear = per_cpu(stubs.addr, cpu);
+
+    if ( !rpt )
+        return;
+
+    per_cpu(root_pgt, cpu) = NULL;
+
+    for ( r = root_table_offset(DIRECTMAP_VIRT_START);
+          r < root_table_offset(HYPERVISOR_VIRT_END); ++r )
+    {
+        l3_pgentry_t *l3t;
+        unsigned int i3;
+
+        if ( !(root_get_flags(rpt[r]) & _PAGE_PRESENT) )
+            continue;
+
+        l3t = l4e_to_l3e(rpt[r]);
+
+        for ( i3 = 0; i3 < L3_PAGETABLE_ENTRIES; ++i3 )
+        {
+            l2_pgentry_t *l2t;
+            unsigned int i2;
+
+            if ( !(l3e_get_flags(l3t[i3]) & _PAGE_PRESENT) )
+                continue;
+
+            ASSERT(!(l3e_get_flags(l3t[i3]) & _PAGE_PSE));
+            l2t = l3e_to_l2e(l3t[i3]);
+
+            for ( i2 = 0; i2 < L2_PAGETABLE_ENTRIES; ++i2 )
+            {
+                if ( !(l2e_get_flags(l2t[i2]) & _PAGE_PRESENT) )
+                    continue;
+
+                ASSERT(!(l2e_get_flags(l2t[i2]) & _PAGE_PSE));
+                free_xen_pagetable(l2e_to_l1e(l2t[i2]));
+            }
+
+            free_xen_pagetable(l2t);
+        }
+
+        free_xen_pagetable(l3t);
+    }
+
+    free_xen_pagetable(rpt);
+
+    /* Also zap the stub mapping for this CPU. */
+    if ( stub_linear )
+    {
+        l3_pgentry_t *l3t = l4e_to_l3e(common_pgt);
+        l2_pgentry_t *l2t = l3e_to_l2e(l3t[l3_table_offset(stub_linear)]);
+        l1_pgentry_t *l1t = l2e_to_l1e(l2t[l2_table_offset(stub_linear)]);
+
+        l1t[l1_table_offset(stub_linear)] = l1e_empty();
+    }
+}
+
 static void cpu_smpboot_free(unsigned int cpu)
 {
-    unsigned int order;
+    unsigned int order, socket = cpu_to_socket(cpu);
+    struct cpuinfo_x86 *c = cpu_data;
+
+    if ( cpumask_empty(socket_cpumask[socket]) )
+    {
+        xfree(socket_cpumask[socket]);
+        socket_cpumask[socket] = NULL;
+    }
+
+    c[cpu].phys_proc_id = XEN_INVALID_SOCKET_ID;
+    c[cpu].cpu_core_id = XEN_INVALID_CORE_ID;
+    c[cpu].compute_unit_id = INVALID_CUID;
+    cpumask_clear_cpu(cpu, &cpu_sibling_setup_map);
 
     free_cpumask_var(per_cpu(cpu_sibling_mask, cpu));
     free_cpumask_var(per_cpu(cpu_core_mask, cpu));
+
+    cleanup_cpu_root_pgt(cpu);
+
+    if ( per_cpu(stubs.addr, cpu) )
+    {
+        unsigned long mfn = per_cpu(stubs.mfn, cpu);
+        unsigned char *stub_page = map_domain_page(_mfn(mfn));
+        unsigned int i;
+
+        memset(stub_page + STUB_BUF_CPU_OFFS(cpu), 0xcc, STUB_BUF_SIZE);
+        for ( i = 0; i < STUBS_PER_PAGE; ++i )
+            if ( stub_page[i * STUB_BUF_SIZE] != 0xcc )
+                break;
+        unmap_domain_page(stub_page);
+        destroy_xen_mappings(per_cpu(stubs.addr, cpu) & PAGE_MASK,
+                             (per_cpu(stubs.addr, cpu) | ~PAGE_MASK) + 1);
+        if ( i == STUBS_PER_PAGE )
+            free_domheap_page(mfn_to_page(mfn));
+    }
 
     order = get_order_from_pages(NR_RESERVED_GDT_PAGES);
     free_xenheap_pages(per_cpu(gdt_table, cpu), order);
@@ -659,32 +934,35 @@ static void cpu_smpboot_free(unsigned int cpu)
 
 static int cpu_smpboot_alloc(unsigned int cpu)
 {
-    unsigned int order;
+    unsigned int i, order, memflags = 0;
+    nodeid_t node = cpu_to_node(cpu);
     struct desc_struct *gdt;
+    unsigned long stub_page;
 
-    stack_base[cpu] = alloc_xenheap_pages(STACK_ORDER, 0);
+    if ( node != NUMA_NO_NODE )
+        memflags = MEMF_node(node);
+
+    stack_base[cpu] = alloc_xenheap_pages(STACK_ORDER, memflags);
     if ( stack_base[cpu] == NULL )
         goto oom;
     memguard_guard_stack(stack_base[cpu]);
 
     order = get_order_from_pages(NR_RESERVED_GDT_PAGES);
-    per_cpu(gdt_table, cpu) = gdt =
-        alloc_xenheap_pages(order, MEMF_node(cpu_to_node(cpu)));
+    per_cpu(gdt_table, cpu) = gdt = alloc_xenheap_pages(order, memflags);
     if ( gdt == NULL )
         goto oom;
     memcpy(gdt, boot_cpu_gdt_table, NR_RESERVED_GDT_PAGES * PAGE_SIZE);
     BUILD_BUG_ON(NR_CPUS > 0x10000);
     gdt[PER_CPU_GDT_ENTRY - FIRST_RESERVED_GDT_ENTRY].a = cpu;
 
-    per_cpu(compat_gdt_table, cpu) = gdt =
-        alloc_xenheap_pages(order, MEMF_node(cpu_to_node(cpu)));
+    per_cpu(compat_gdt_table, cpu) = gdt = alloc_xenheap_pages(order, memflags);
     if ( gdt == NULL )
         goto oom;
     memcpy(gdt, boot_cpu_compat_gdt_table, NR_RESERVED_GDT_PAGES * PAGE_SIZE);
     gdt[PER_CPU_GDT_ENTRY - FIRST_RESERVED_GDT_ENTRY].a = cpu;
 
     order = get_order_from_bytes(IDT_ENTRIES * sizeof(idt_entry_t));
-    idt_tables[cpu] = alloc_xenheap_pages(order, MEMF_node(cpu_to_node(cpu)));
+    idt_tables[cpu] = alloc_xenheap_pages(order, memflags);
     if ( idt_tables[cpu] == NULL )
         goto oom;
     memcpy(idt_tables[cpu], idt_table, IDT_ENTRIES * sizeof(idt_entry_t));
@@ -692,7 +970,27 @@ static int cpu_smpboot_alloc(unsigned int cpu)
     set_ist(&idt_tables[cpu][TRAP_nmi],           IST_NONE);
     set_ist(&idt_tables[cpu][TRAP_machine_check], IST_NONE);
     set_ist(&idt_tables[cpu][TRAP_debug],         IST_NONE);
-    
+
+    for ( stub_page = 0, i = cpu & ~(STUBS_PER_PAGE - 1);
+          i < nr_cpu_ids && i <= (cpu | (STUBS_PER_PAGE - 1)); ++i )
+        if ( cpu_online(i) && cpu_to_node(i) == node )
+        {
+            per_cpu(stubs.mfn, cpu) = per_cpu(stubs.mfn, i);
+            break;
+        }
+    BUG_ON(i == cpu);
+    stub_page = alloc_stub_page(cpu, &per_cpu(stubs.mfn, cpu));
+    if ( !stub_page )
+        goto oom;
+    per_cpu(stubs.addr, cpu) = stub_page + STUB_BUF_CPU_OFFS(cpu);
+
+    if ( setup_cpu_root_pgt(cpu) )
+        goto oom;
+
+    if ( secondary_socket_cpumask == NULL &&
+         (secondary_socket_cpumask = xzalloc(cpumask_t)) == NULL )
+        goto oom;
+
     if ( zalloc_cpumask_var(&per_cpu(cpu_sibling_mask, cpu)) &&
          zalloc_cpumask_var(&per_cpu(cpu_core_mask, cpu)) )
         return 0;
@@ -730,18 +1028,42 @@ static struct notifier_block cpu_smpboot_nfb = {
 
 void __init smp_prepare_cpus(unsigned int max_cpus)
 {
+    int rc;
+
     register_cpu_notifier(&cpu_smpboot_nfb);
 
     mtrr_aps_sync_begin();
 
     /* Setup boot CPU information */
-    smp_store_cpu_info(0); /* Final full version of the data */
+    initialize_cpu_data(0); /* Final full version of the data */
     print_cpu_info(0);
 
     boot_cpu_physical_apicid = get_apic_id();
     x86_cpu_to_apicid[0] = boot_cpu_physical_apicid;
 
     stack_base[0] = stack_start;
+
+    rc = setup_cpu_root_pgt(0);
+    if ( rc )
+        panic("Error %d setting up PV root page table\n", rc);
+    if ( per_cpu(root_pgt, 0) )
+    {
+        get_cpu_info()->pv_cr3 = 0;
+
+        /*
+         * All entry points which may need to switch page tables have to start
+         * with interrupts off. Re-write what pv_trap_init() has put there.
+         */
+        _set_gate(idt_table + LEGACY_SYSCALL_VECTOR, SYS_DESC_irq_gate, 3,
+                  &int80_direct_trap);
+    }
+
+    set_nr_sockets();
+
+    socket_cpumask = xzalloc_array(cpumask_t *, nr_sockets);
+    if ( socket_cpumask == NULL ||
+         (socket_cpumask[cpu_to_socket(0)] = xzalloc(cpumask_t)) == NULL )
+        panic("No memory for socket CPU siblings map");
 
     if ( !zalloc_cpumask_var(&per_cpu(cpu_sibling_mask, 0)) ||
          !zalloc_cpumask_var(&per_cpu(cpu_core_mask, 0)) )
@@ -774,12 +1096,12 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
     {
         printk("weird, boot CPU (#%d) not listed by the BIOS.\n",
                boot_cpu_physical_apicid);
-        physid_set(hard_smp_processor_id(), phys_cpu_present_map);
+        physid_set(get_apic_id(), phys_cpu_present_map);
     }
 
     /* If we couldn't find a local APIC, then get out of here now! */
-    if ( APIC_INTEGRATED(apic_version[boot_cpu_physical_apicid])
-         && !cpu_has_apic )
+    if ( !APIC_INTEGRATED(apic_version[boot_cpu_physical_apicid])
+         || !cpu_has_apic )
     {
         printk(KERN_ERR "BIOS bug, local APIC #%d not detected!...\n",
                boot_cpu_physical_apicid);
@@ -800,30 +1122,31 @@ void __init smp_prepare_boot_cpu(void)
 {
     cpumask_set_cpu(smp_processor_id(), &cpu_online_map);
     cpumask_set_cpu(smp_processor_id(), &cpu_present_map);
+
+    get_cpu_info()->use_pv_cr3 = 0;
+    get_cpu_info()->xen_cr3 = 0;
+    get_cpu_info()->pv_cr3 = 0;
 }
 
 static void
 remove_siblinginfo(int cpu)
 {
     int sibling;
-    struct cpuinfo_x86 *c = cpu_data;
+
+    cpumask_clear_cpu(cpu, socket_cpumask[cpu_to_socket(cpu)]);
 
     for_each_cpu ( sibling, per_cpu(cpu_core_mask, cpu) )
     {
         cpumask_clear_cpu(cpu, per_cpu(cpu_core_mask, sibling));
         /* Last thread sibling in this cpu core going down. */
         if ( cpumask_weight(per_cpu(cpu_sibling_mask, cpu)) == 1 )
-            c[sibling].booted_cores--;
+            cpu_data[sibling].booted_cores--;
     }
    
     for_each_cpu(sibling, per_cpu(cpu_sibling_mask, cpu))
         cpumask_clear_cpu(cpu, per_cpu(cpu_sibling_mask, sibling));
     cpumask_clear(per_cpu(cpu_sibling_mask, cpu));
     cpumask_clear(per_cpu(cpu_core_mask, cpu));
-    c[cpu].phys_proc_id = BAD_APICID;
-    c[cpu].cpu_core_id = BAD_APICID;
-    c[cpu].compute_unit_id = BAD_APICID;
-    cpumask_clear_cpu(cpu, &cpu_sibling_setup_map);
 }
 
 void __cpu_disable(void)
@@ -845,7 +1168,8 @@ void __cpu_disable(void)
 
     /* It's now safe to remove this processor from the online map */
     cpumask_clear_cpu(cpu, &cpu_online_map);
-    fixup_irqs();
+    fixup_irqs(&cpu_online_map, 1);
+    fixup_eoi();
 
     if ( cpu_disable_scheduler(cpu) )
         BUG();
@@ -870,7 +1194,7 @@ void __cpu_die(unsigned int cpu)
 
 int cpu_add(uint32_t apic_id, uint32_t acpi_id, uint32_t pxm)
 {
-    int node, cpu = -1;
+    int cpu = -1;
 
     dprintk(XENLOG_DEBUG, "cpu_add apic_id %x acpi_id %x pxm %x\n",
             apic_id, acpi_id, pxm);
@@ -904,7 +1228,9 @@ int cpu_add(uint32_t apic_id, uint32_t acpi_id, uint32_t pxm)
 
     if ( !srat_disabled() )
     {
-        if ( (node = setup_node(pxm)) < 0 )
+        nodeid_t node = setup_node(pxm);
+
+        if ( node == NUMA_NO_NODE )
         {
             dprintk(XENLOG_WARNING,
                     "Setup node failed for pxm %x\n", pxm);
@@ -962,21 +1288,11 @@ int __cpu_up(unsigned int cpu)
 
 void __init smp_cpus_done(void)
 {
-    /*
-     * Don't taint if we are running SMP kernel on a single non-MP
-     * approved Athlon
-     */
-    if ( tainted & TAINT_UNSAFE_SMP )
-    {
-        if ( num_online_cpus() > 1 )
-            printk(KERN_INFO "WARNING: This combination of AMD "
-                   "processors is not suitable for SMP.\n");
-        else
-            tainted &= ~TAINT_UNSAFE_SMP;
-    }
-
     if ( nmi_watchdog == NMI_LOCAL_APIC )
+    {
+        setup_apic_nmi_watchdog();
         check_nmi_watchdog();
+    }
 
     setup_ioapic_dest();
 

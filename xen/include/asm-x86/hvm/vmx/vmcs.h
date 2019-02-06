@@ -186,6 +186,7 @@ extern u32 vmx_pin_based_exec_control;
 #define VM_EXIT_SAVE_GUEST_EFER         0x00100000
 #define VM_EXIT_LOAD_HOST_EFER          0x00200000
 #define VM_EXIT_SAVE_PREEMPT_TIMER      0x00400000
+#define VM_EXIT_CLEAR_BNDCFGS           0x00800000
 extern u32 vmx_vmexit_control;
 
 #define VM_ENTRY_IA32E_MODE             0x00000200
@@ -194,6 +195,7 @@ extern u32 vmx_vmexit_control;
 #define VM_ENTRY_LOAD_PERF_GLOBAL_CTRL  0x00002000
 #define VM_ENTRY_LOAD_GUEST_PAT         0x00004000
 #define VM_ENTRY_LOAD_GUEST_EFER        0x00008000
+#define VM_ENTRY_LOAD_BNDCFGS           0x00010000
 extern u32 vmx_vmentry_control;
 
 #define SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES 0x00000001
@@ -208,26 +210,31 @@ extern u32 vmx_vmentry_control;
 #define SECONDARY_EXEC_VIRTUAL_INTR_DELIVERY    0x00000200
 #define SECONDARY_EXEC_PAUSE_LOOP_EXITING       0x00000400
 #define SECONDARY_EXEC_ENABLE_INVPCID           0x00001000
+#define SECONDARY_EXEC_ENABLE_VM_FUNCTIONS      0x00002000
 #define SECONDARY_EXEC_ENABLE_VMCS_SHADOWING    0x00004000
+#define SECONDARY_EXEC_ENABLE_PML               0x00020000
+#define SECONDARY_EXEC_ENABLE_VIRT_EXCEPTIONS   0x00040000
+#define SECONDARY_EXEC_XSAVES                   0x00100000
+#define SECONDARY_EXEC_TSC_SCALING              0x02000000
 extern u32 vmx_secondary_exec_control;
 
-#define VMX_EPT_EXEC_ONLY_SUPPORTED             0x00000001
-#define VMX_EPT_WALK_LENGTH_4_SUPPORTED         0x00000040
-#define VMX_EPT_MEMORY_TYPE_UC                  0x00000100
-#define VMX_EPT_MEMORY_TYPE_WB                  0x00004000
-#define VMX_EPT_SUPERPAGE_2MB                   0x00010000
-#define VMX_EPT_SUPERPAGE_1GB                   0x00020000
-#define VMX_EPT_INVEPT_INSTRUCTION              0x00100000
-#define VMX_EPT_INVEPT_SINGLE_CONTEXT           0x02000000
-#define VMX_EPT_INVEPT_ALL_CONTEXT              0x04000000
+#define VMX_EPT_EXEC_ONLY_SUPPORTED                         0x00000001
+#define VMX_EPT_WALK_LENGTH_4_SUPPORTED                     0x00000040
+#define VMX_EPT_MEMORY_TYPE_UC                              0x00000100
+#define VMX_EPT_MEMORY_TYPE_WB                              0x00004000
+#define VMX_EPT_SUPERPAGE_2MB                               0x00010000
+#define VMX_EPT_SUPERPAGE_1GB                               0x00020000
+#define VMX_EPT_INVEPT_INSTRUCTION                          0x00100000
+#define VMX_EPT_AD_BIT                                      0x00200000
+#define VMX_EPT_INVEPT_SINGLE_CONTEXT                       0x02000000
+#define VMX_EPT_INVEPT_ALL_CONTEXT                          0x04000000
+#define VMX_VPID_INVVPID_INSTRUCTION                     0x00100000000ULL
+#define VMX_VPID_INVVPID_INDIVIDUAL_ADDR                 0x10000000000ULL
+#define VMX_VPID_INVVPID_SINGLE_CONTEXT                  0x20000000000ULL
+#define VMX_VPID_INVVPID_ALL_CONTEXT                     0x40000000000ULL
+#define VMX_VPID_INVVPID_SINGLE_CONTEXT_RETAINING_GLOBAL 0x80000000000ULL
 
 #define VMX_MISC_VMWRITE_ALL                    0x20000000
-
-#define VMX_VPID_INVVPID_INSTRUCTION                        0x100000000ULL
-#define VMX_VPID_INVVPID_INDIVIDUAL_ADDR                    0x10000000000ULL
-#define VMX_VPID_INVVPID_SINGLE_CONTEXT                     0x20000000000ULL
-#define VMX_VPID_INVVPID_ALL_CONTEXT                        0x40000000000ULL
-#define VMX_VPID_INVVPID_SINGLE_CONTEXT_RETAINING_GLOBAL    0x80000000000ULL
 
 #define VMX_MISC_CR3_TARGET             0x1ff0000
 
@@ -268,6 +275,19 @@ extern u32 vmx_secondary_exec_control;
     (vmx_pin_based_exec_control & PIN_BASED_POSTED_INTERRUPT)
 #define cpu_has_vmx_vmcs_shadowing \
     (vmx_secondary_exec_control & SECONDARY_EXEC_ENABLE_VMCS_SHADOWING)
+#define cpu_has_vmx_vmfunc \
+    (vmx_secondary_exec_control & SECONDARY_EXEC_ENABLE_VM_FUNCTIONS)
+#define cpu_has_vmx_virt_exceptions \
+    (vmx_secondary_exec_control & SECONDARY_EXEC_ENABLE_VIRT_EXCEPTIONS)
+#define cpu_has_vmx_pml \
+    (vmx_secondary_exec_control & SECONDARY_EXEC_ENABLE_PML)
+#define cpu_has_vmx_mpx \
+    ((vmx_vmexit_control & VM_EXIT_CLEAR_BNDCFGS) && \
+     (vmx_vmentry_control & VM_ENTRY_LOAD_BNDCFGS))
+#define cpu_has_vmx_xsaves \
+    (vmx_secondary_exec_control & SECONDARY_EXEC_XSAVES)
+#define cpu_has_vmx_tsc_scaling \
+    (vmx_secondary_exec_control & SECONDARY_EXEC_TSC_SCALING)
 
 #define VMCS_RID_TYPE_MASK              0x80000000
 

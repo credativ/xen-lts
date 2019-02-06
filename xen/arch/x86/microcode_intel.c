@@ -99,8 +99,7 @@ static int collect_cpu_info(int cpu_num, struct cpu_signature *csig)
 
     memset(csig, 0, sizeof(*csig));
 
-    if ( (c->x86_vendor != X86_VENDOR_INTEL) || (c->x86 < 6) ||
-         cpu_has(c, X86_FEATURE_IA64) )
+    if ( (c->x86_vendor != X86_VENDOR_INTEL) || (c->x86 < 6) )
     {
         printk(KERN_ERR "microcode: CPU%d not a capable Intel "
                "processor\n", cpu_num);
@@ -403,7 +402,7 @@ static const struct microcode_ops microcode_intel_ops = {
     .apply_microcode                  = apply_microcode,
 };
 
-static __init int microcode_init_intel(void)
+int __init microcode_init_intel(void)
 {
     if ( boot_cpu_data.x86_vendor == X86_VENDOR_INTEL )
         microcode_ops = &microcode_intel_ops;

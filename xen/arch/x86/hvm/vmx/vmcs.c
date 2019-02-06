@@ -525,7 +525,7 @@ int vmx_cpu_up(void)
     {
         eax  = IA32_FEATURE_CONTROL_MSR_LOCK;
         eax |= IA32_FEATURE_CONTROL_MSR_ENABLE_VMXON_OUTSIDE_SMX;
-        if ( test_bit(X86_FEATURE_SMXE, &boot_cpu_data.x86_capability) )
+        if ( test_bit(X86_FEATURE_SMX, &boot_cpu_data.x86_capability) )
             eax |= IA32_FEATURE_CONTROL_MSR_ENABLE_VMXON_INSIDE_SMX;
         wrmsr(IA32_FEATURE_CONTROL_MSR, eax, 0);
     }
@@ -542,7 +542,7 @@ int vmx_cpu_up(void)
     {
     case -2: /* #UD or #GP */
         if ( bios_locked &&
-             test_bit(X86_FEATURE_SMXE, &boot_cpu_data.x86_capability) &&
+             test_bit(X86_FEATURE_SMX, &boot_cpu_data.x86_capability) &&
              (!(eax & IA32_FEATURE_CONTROL_MSR_ENABLE_VMXON_OUTSIDE_SMX) ||
               !(eax & IA32_FEATURE_CONTROL_MSR_ENABLE_VMXON_INSIDE_SMX)) )
         {
@@ -1549,15 +1549,11 @@ static void vmcs_dump(unsigned char ch)
     printk("**************************************\n");
 }
 
-static struct keyhandler vmcs_dump_keyhandler = {
-    .diagnostic = 1,
-    .u.fn = vmcs_dump,
-    .desc = "dump Intel's VMCS"
-};
+
 
 void __init setup_vmcs_dump(void)
 {
-    register_keyhandler('v', &vmcs_dump_keyhandler);
+    register_keyhandler('v', vmcs_dump, "dump VT-x VMCSs", 1);
 }
 
 

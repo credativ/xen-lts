@@ -729,155 +729,286 @@ int cpuid_hypervisor_leaves( uint32_t idx, uint32_t sub_idx,
     return 1;
 }
 
+static void _domain_cpuid(struct domain *currd,
+                          unsigned int leaf, unsigned int subleaf,
+                          unsigned int *eax, unsigned int *ebx,
+                          unsigned int *ecx, unsigned int *edx)
+{
+    if ( !is_control_domain(currd) && !is_hardware_domain(currd) )
+        domain_cpuid(currd, leaf, subleaf, eax, ebx, ecx, edx);
+    else
+        cpuid_count(leaf, subleaf, eax, ebx, ecx, edx);
+}
+
 void pv_cpuid(struct cpu_user_regs *regs)
 {
-    uint32_t a, b, c, d;
+    uint32_t leaf, subleaf, a, b, c, d;
+    struct vcpu *curr = current;
+    struct domain *currd = curr->domain;
 
-    a = regs->eax;
+    leaf = a = regs->eax;
     b = regs->ebx;
-    c = regs->ecx;
+    subleaf = c = regs->ecx;
     d = regs->edx;
 
-    if ( current->domain->domain_id != 0 )
-    {
-        unsigned int cpuid_leaf = a, sub_leaf = c;
-
-        if ( !cpuid_hypervisor_leaves(a, c, &a, &b, &c, &d) )
-            domain_cpuid(current->domain, a, c, &a, &b, &c, &d);
-
-        switch ( cpuid_leaf )
-        {
-        case XSTATE_CPUID:
-        {
-            unsigned int _eax, _ebx, _ecx, _edx;
-            /* EBX value of main leaf 0 depends on enabled xsave features */
-            if ( sub_leaf == 0 && current->arch.xcr0 )
-            {
-                /* reset EBX to default value first */
-                b = XSTATE_AREA_MIN_SIZE;
-                for ( sub_leaf = 2; sub_leaf < 63; sub_leaf++ )
-                {
-                    if ( !(current->arch.xcr0 & (1ULL << sub_leaf)) )
-                        continue;
-                    domain_cpuid(current->domain, cpuid_leaf, sub_leaf,
-                                 &_eax, &_ebx, &_ecx, &_edx);
-                    if ( (_eax + _ebx) > b )
-                        b = _eax + _ebx;
-                }
-            }
-            goto xstate;
-        }
-        }
+    if ( cpuid_hypervisor_leaves(leaf, subleaf, &a, &b, &c, &d) )
         goto out;
-    }
 
-    asm ( 
-        "cpuid"
-        : "=a" (a), "=b" (b), "=c" (c), "=d" (d)
-        : "0" (a), "1" (b), "2" (c), "3" (d) );
+    _domain_cpuid(currd, leaf, subleaf, &a, &b, &c, &d);
 
-    if ( (regs->eax & 0x7fffffff) == 0x00000001 )
+    switch ( leaf )
     {
-        /* Modify Feature Information. */
-        __clear_bit(X86_FEATURE_VME, &d);
-        if ( !cpu_has_apic )
-            __clear_bit(X86_FEATURE_APIC, &d);
-        __clear_bit(X86_FEATURE_PSE, &d);
-        __clear_bit(X86_FEATURE_PGE, &d);
-        __clear_bit(X86_FEATURE_PSE36, &d);
-    }
+        uint32_t tmp, _ecx;
 
-    switch ( regs->_eax )
-    {
     case 0x00000001:
-        /* Modify Feature Information. */
-        if ( !cpu_has_sep )
-            __clear_bit(X86_FEATURE_SEP, &d);
-        __clear_bit(X86_FEATURE_DS, &d);
-        __clear_bit(X86_FEATURE_ACC, &d);
-        __clear_bit(X86_FEATURE_PBE, &d);
-        if ( is_pvh_vcpu(current) )
-            __clear_bit(X86_FEATURE_MTRR, &d);
+        c &= pv_featureset[FEATURESET_1c];
+        d &= pv_featureset[FEATURESET_1d];
 
-        __clear_bit(X86_FEATURE_DTES64 % 32, &c);
-        __clear_bit(X86_FEATURE_MWAIT % 32, &c);
-        __clear_bit(X86_FEATURE_DSCPL % 32, &c);
-        __clear_bit(X86_FEATURE_VMXE % 32, &c);
-        __clear_bit(X86_FEATURE_SMXE % 32, &c);
-        __clear_bit(X86_FEATURE_TM2 % 32, &c);
-        if ( is_pv_32bit_vcpu(current) )
-            __clear_bit(X86_FEATURE_CX16 % 32, &c);
-        __clear_bit(X86_FEATURE_XTPR % 32, &c);
-        __clear_bit(X86_FEATURE_PDCM % 32, &c);
-        __clear_bit(X86_FEATURE_PCID % 32, &c);
-        __clear_bit(X86_FEATURE_DCA % 32, &c);
-        if ( !cpu_has_xsave )
+        if ( is_pv_32bit_domain(currd) )
+            c &= ~cpufeat_mask(X86_FEATURE_CX16);
+
+        if ( !is_pvh_domain(currd) )
         {
-            __clear_bit(X86_FEATURE_XSAVE % 32, &c);
-            __clear_bit(X86_FEATURE_AVX % 32, &c);
+            /*
+             * Delete the PVH condition when HVMLite formally replaces PVH,
+             * and HVM guests no longer enter a PV codepath.
+             */
+
+            /*
+             * !!! OSXSAVE handling for PV guests is non-architectural !!!
+             *
+             * Architecturally, the correct code here is simply:
+             *
+             *   if ( curr->arch.pv_vcpu.ctrlreg[4] & X86_CR4_OSXSAVE )
+             *       c |= cpufeat_mask(X86_FEATURE_OSXSAVE);
+             *
+             * However because of bugs in Xen (before c/s bd19080b, Nov 2010,
+             * the XSAVE cpuid flag leaked into guests despite the feature not
+             * being available for use), buggy workarounds where introduced to
+             * Linux (c/s 947ccf9c, also Nov 2010) which relied on the fact
+             * that Xen also incorrectly leaked OSXSAVE into the guest.
+             *
+             * Furthermore, providing architectural OSXSAVE behaviour to a
+             * many Linux PV guests triggered a further kernel bug when the
+             * fpu code observes that XSAVEOPT is available, assumes that
+             * xsave state had been set up for the task, and follows a wild
+             * pointer.
+             *
+             * Older Linux PVOPS kernels however do require architectural
+             * behaviour.  They observe Xen's leaked OSXSAVE and assume they
+             * can already use XSETBV, dying with a #UD because the shadowed
+             * CR4.OSXSAVE is clear.  This behaviour has been adjusted in all
+             * observed cases via stable backports of the above changeset.
+             *
+             * Therefore, the leaking of Xen's OSXSAVE setting has become a
+             * defacto part of the PV ABI and can't reasonably be corrected.
+             * It can however be restricted to only the enlightened CPUID
+             * view, as seen by the guest kernel.
+             *
+             * The following situations and logic now applies:
+             *
+             * - Hardware without CPUID faulting support and native CPUID:
+             *    There is nothing Xen can do here.  The hosts XSAVE flag will
+             *    leak through and Xen's OSXSAVE choice will leak through.
+             *
+             *    In the case that the guest kernel has not set up OSXSAVE, only
+             *    SSE will be set in xcr0, and guest userspace can't do too much
+             *    damage itself.
+             *
+             * - Enlightened CPUID or CPUID faulting available:
+             *    Xen can fully control what is seen here.  Guest kernels need
+             *    to see the leaked OSXSAVE via the enlightened path, but
+             *    guest userspace and the native is given architectural
+             *    behaviour.
+             *
+             *    Emulated vs Faulted CPUID is distinguised based on whether a
+             *    #UD or #GP is currently being serviced.
+             */
+            /* OSXSAVE cleared by pv_featureset.  Fast-forward CR4 back in. */
+            if ( (curr->arch.pv_vcpu.ctrlreg[4] & X86_CR4_OSXSAVE) ||
+                 (regs->entry_vector == TRAP_invalid_op &&
+                  guest_kernel_mode(curr, regs) &&
+                  (read_cr4() & X86_CR4_OSXSAVE)) )
+                c |= cpufeat_mask(X86_FEATURE_OSXSAVE);
+
+            /*
+             * At the time of writing, a PV domain is the only viable option
+             * for Dom0.  Several interactions between dom0 and Xen for real
+             * hardware setup have unfortunately been implemented based on
+             * state which incorrectly leaked into dom0.
+             *
+             * These leaks are retained for backwards compatibility, but
+             * restricted to the hardware domains kernel only.
+             */
+            if ( is_hardware_domain(currd) && guest_kernel_mode(curr, regs) )
+            {
+                /*
+                 * MTRR used to unconditionally leak into PV guests.  They
+                 * cannot MTRR infrastructure at all, and shouldn't be able to
+                 * see the feature.
+                 *
+                 * Modern PVOPS Linux self-clobbers the MTRR feature, to avoid
+                 * trying to use the associated MSRs.  Xenolinux-based PV dom0's
+                 * however use the MTRR feature as an indication of the presence
+                 * of the XENPF_{add,del,read}_memtype hypercalls.
+                 */
+                if ( cpu_has_mtrr )
+                    d |= cpufeat_mask(X86_FEATURE_MTRR);
+
+                /*
+                 * MONITOR never leaked into PV guests, as PV guests cannot
+                 * use the MONITOR/MWAIT instructions.  As such, they require
+                 * the feature to not being present in emulated CPUID.
+                 *
+                 * Modern PVOPS Linux try to be cunning and use native CPUID
+                 * to see if the hardware actually supports MONITOR, and by
+                 * extension, deep C states.
+                 *
+                 * If the feature is seen, deep-C state information is
+                 * obtained from the DSDT and handed back to Xen via the
+                 * XENPF_set_processor_pminfo hypercall.
+                 *
+                 * This mechanism is incompatible with an HVM-based hardware
+                 * domain, and also with CPUID Faulting.
+                 *
+                 * Luckily, Xen can be just as 'cunning', and distinguish an
+                 * emulated CPUID from a faulted CPUID by whether a #UD or #GP
+                 * fault is currently being serviced.  Yuck...
+                 */
+                if ( cpu_has_monitor && regs->entry_vector == TRAP_gp_fault )
+                    c |= cpufeat_mask(X86_FEATURE_MONITOR);
+
+                /*
+                 * While MONITOR never leaked into PV guests, EIST always used
+                 * to.
+                 *
+                 * Modern PVOPS will only parse P state information from the
+                 * DSDT and return it to Xen if EIST is seen in the emulated
+                 * CPUID information.
+                 */
+                if ( cpu_has_eist )
+                    c |= cpufeat_mask(X86_FEATURE_EIST);
+            }
         }
-        if ( !cpu_has_apic )
-           __clear_bit(X86_FEATURE_X2APIC % 32, &c);
-        __set_bit(X86_FEATURE_HYPERVISOR % 32, &c);
+
+        c |= cpufeat_mask(X86_FEATURE_HYPERVISOR);
         break;
 
     case 0x00000007:
-        if ( regs->_ecx == 0 )
-            b &= (cpufeat_mask(X86_FEATURE_BMI1) |
-                  cpufeat_mask(X86_FEATURE_HLE)  |
-                  cpufeat_mask(X86_FEATURE_AVX2) |
-                  cpufeat_mask(X86_FEATURE_BMI2) |
-                  cpufeat_mask(X86_FEATURE_ERMS) |
-                  cpufeat_mask(X86_FEATURE_RTM)  |
-                  cpufeat_mask(X86_FEATURE_FSGSBASE));
+        if ( subleaf == 0 )
+        {
+            /* Fold host's FDP_EXCP_ONLY and NO_FPU_SEL into guest's view. */
+            b &= (pv_featureset[FEATURESET_7b0] &
+                  ~special_features[FEATURESET_7b0]);
+            b |= (host_featureset[FEATURESET_7b0] &
+                  special_features[FEATURESET_7b0]);
+
+            c &= pv_featureset[FEATURESET_7c0];
+            d &= pv_featureset[FEATURESET_7d0];
+
+            if ( !is_pvh_domain(currd) )
+            {
+                /*
+                 * Delete the PVH condition when HVMLite formally replaces PVH,
+                 * and HVM guests no longer enter a PV codepath.
+                 */
+
+                /* OSPKE cleared by pv_featureset.  Fast-forward CR4 back in. */
+                if ( curr->arch.pv_vcpu.ctrlreg[4] & X86_CR4_PKE )
+                    c |= cpufeat_mask(X86_FEATURE_OSPKE);
+            }
+        }
         else
-            b = 0;
-        a = c = d = 0;
+            b = c = d = 0;
+        a = 0;
         break;
 
     case XSTATE_CPUID:
-    xstate:
-        if ( !cpu_has_xsave )
+        _domain_cpuid(currd, 1, 0, &tmp, &tmp, &_ecx, &tmp);
+        _ecx &= pv_featureset[FEATURESET_1c];
+
+        if ( !(_ecx & cpufeat_mask(X86_FEATURE_XSAVE)) || subleaf >= 63 )
             goto unsupported;
-        if ( regs->_ecx == 1 )
+        switch ( subleaf )
         {
-            a &= XSTATE_FEATURE_XSAVEOPT |
-                 XSTATE_FEATURE_XSAVEC |
-                 (cpu_has_xgetbv1 ? XSTATE_FEATURE_XGETBV1 : 0) |
-                 (cpu_has_xsaves ? XSTATE_FEATURE_XSAVES : 0);
-            if ( !cpu_has_xsaves )
-                b = c = d = 0;
+        case 0:
+        {
+            uint64_t xfeature_mask = XSTATE_FP_SSE;
+            uint32_t xstate_size = XSTATE_AREA_MIN_SIZE;
+
+            if ( _ecx & cpufeat_mask(X86_FEATURE_AVX) )
+            {
+                xfeature_mask |= XSTATE_YMM;
+                xstate_size = (xstate_offsets[_XSTATE_YMM] +
+                               xstate_sizes[_XSTATE_YMM]);
+            }
+
+            a = (uint32_t)xfeature_mask;
+            d = (uint32_t)(xfeature_mask >> 32);
+            c = xstate_size;
+
+            /*
+             * Always read CPUID.0xD[ECX=0].EBX from hardware, rather than
+             * domain policy.  It varies with enabled xstate, and the correct
+             * xcr0 is in context.
+             */
+            if ( !is_control_domain(currd) && !is_hardware_domain(currd) )
+                cpuid_count(leaf, subleaf, &tmp, &b, &tmp, &tmp);
+            break;
+        }
+
+        case 1:
+            a &= pv_featureset[FEATURESET_Da1];
+            b = c = d = 0;
+            break;
         }
         break;
 
     case 0x80000001:
-        /* Modify Feature Information. */
-        if ( is_pv_32bit_vcpu(current) )
-        {
-            __clear_bit(X86_FEATURE_LM % 32, &d);
-            __clear_bit(X86_FEATURE_LAHF_LM % 32, &c);
-        }
-        if ( is_pv_32on64_vcpu(current) &&
-             boot_cpu_data.x86_vendor != X86_VENDOR_AMD )
-            __clear_bit(X86_FEATURE_SYSCALL % 32, &d);
-        __clear_bit(X86_FEATURE_PAGE1GB % 32, &d);
-        __clear_bit(X86_FEATURE_RDTSCP % 32, &d);
+        c &= pv_featureset[FEATURESET_e1c];
+        d &= pv_featureset[FEATURESET_e1d];
 
-        __clear_bit(X86_FEATURE_SVM % 32, &c);
-        if ( !cpu_has_apic )
-           __clear_bit(X86_FEATURE_EXTAPIC % 32, &c);
-        __clear_bit(X86_FEATURE_OSVW % 32, &c);
-        __clear_bit(X86_FEATURE_IBS % 32, &c);
-        __clear_bit(X86_FEATURE_SKINIT % 32, &c);
-        __clear_bit(X86_FEATURE_WDT % 32, &c);
-        __clear_bit(X86_FEATURE_LWP % 32, &c);
-        __clear_bit(X86_FEATURE_NODEID_MSR % 32, &c);
-        __clear_bit(X86_FEATURE_TOPOEXT % 32, &c);
-        __clear_bit(X86_FEATURE_MWAITX % 32, &c);
+        /* If not emulating AMD, clear the duplicated features in e1d. */
+        if ( currd->arch.x86_vendor != X86_VENDOR_AMD )
+            d &= ~CPUID_COMMON_1D_FEATURES;
+
+        /*
+         * MTRR used to unconditionally leak into PV guests.  They cannot MTRR
+         * infrastructure at all, and shouldn't be able to see the feature.
+         *
+         * Modern PVOPS Linux self-clobbers the MTRR feature, to avoid trying
+         * to use the associated MSRs.  Xenolinux-based PV dom0's however use
+         * the MTRR feature as an indication of the presence of the
+         * XENPF_{add,del,read}_memtype hypercalls.
+         */
+        if ( is_hardware_domain(currd) && guest_kernel_mode(curr, regs) &&
+             cpu_has_mtrr )
+            d |= cpufeat_mask(X86_FEATURE_MTRR);
+
+        if ( is_pv_32bit_domain(currd) )
+        {
+            d &= ~cpufeat_mask(X86_FEATURE_LM);
+            c &= ~cpufeat_mask(X86_FEATURE_LAHF_LM);
+
+            if ( boot_cpu_data.x86_vendor != X86_VENDOR_AMD )
+                d &= ~cpufeat_mask(X86_FEATURE_SYSCALL);
+        }
+        break;
+
+    case 0x80000007:
+        d &= (pv_featureset[FEATURESET_e7d] |
+              (host_featureset[FEATURESET_e7d] & cpufeat_mask(X86_FEATURE_ITSC)));
+        break;
+
+    case 0x80000008:
+        a = paddr_bits | (vaddr_bits << 8);
+        b &= pv_featureset[FEATURESET_e8b];
+        break;
+
+    case 0x0000000a: /* Architectural Performance Monitor Features (Intel) */
         break;
 
     case 0x00000005: /* MONITOR/MWAIT */
-    case 0x0000000a: /* Architectural Performance Monitor Features */
     case 0x0000000b: /* Extended Topology Enumeration */
     case 0x8000000a: /* SVM revision and features */
     case 0x8000001b: /* Instruction Based Sampling */
@@ -886,13 +1017,12 @@ void pv_cpuid(struct cpu_user_regs *regs)
     unsupported:
         a = b = c = d = 0;
         break;
-
-    default:
-        (void)cpuid_hypervisor_leaves(regs->eax, 0, &a, &b, &c, &d);
-        break;
     }
 
  out:
+    /* VPMU may decide to modify some of the leaves */
+    vpmu_do_cpuid(leaf, &a, &b, &c, &d);
+
     regs->eax = a;
     regs->ebx = b;
     regs->ecx = c;
@@ -2535,7 +2665,10 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
         if ( v->domain->arch.vtsc )
             pv_soft_rdtsc(v, regs, 0);
         else
-            rdtsc(regs->eax, regs->edx);
+        {
+            val = rdtsc();
+            goto rdmsr_writeback;
+        }
         break;
 
     case 0x32: /* RDMSR */
@@ -3104,7 +3237,7 @@ static void nmi_mce_softirq(void)
 
     /* Set the tmp value unconditionally, so that
      * the check in the iret hypercall works. */
-    cpumask_copy(st->vcpu->cpu_affinity_tmp, st->vcpu->cpu_affinity);
+    cpumask_copy(st->vcpu->cpu_hard_affinity_tmp, st->vcpu->cpu_hard_affinity);
 
     if ((cpu != st->processor)
        || (st->processor != st->vcpu->processor))
@@ -3139,11 +3272,11 @@ void async_exception_cleanup(struct vcpu *curr)
         return;
 
     /* Restore affinity.  */
-    if ( !cpumask_empty(curr->cpu_affinity_tmp) &&
-         !cpumask_equal(curr->cpu_affinity_tmp, curr->cpu_affinity) )
+    if ( !cpumask_empty(curr->cpu_hard_affinity_tmp) &&
+         !cpumask_equal(curr->cpu_hard_affinity_tmp, curr->cpu_hard_affinity) )
     {
-        vcpu_set_affinity(curr, curr->cpu_affinity_tmp);
-        cpumask_clear(curr->cpu_affinity_tmp);
+        vcpu_set_affinity(curr, curr->cpu_hard_affinity_tmp);
+        cpumask_clear(curr->cpu_hard_affinity_tmp);
     }
 
     if ( !(curr->async_exception_mask & (curr->async_exception_mask - 1)) )

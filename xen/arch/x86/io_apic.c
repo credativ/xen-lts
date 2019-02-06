@@ -1250,11 +1250,6 @@ static void _print_IO_APIC_keyhandler(unsigned char key)
 {
     __print_IO_APIC(0);
 }
-static struct keyhandler print_IO_APIC_keyhandler = {
-    .diagnostic = 1,
-    .u.fn = _print_IO_APIC_keyhandler,
-    .desc = "print ioapic info"
-};
 
 static void __init enable_IO_APIC(void)
 {
@@ -2053,7 +2048,7 @@ void __init setup_IO_APIC(void)
     print_IO_APIC();
     ioapic_pm_state_alloc();
 
-    register_keyhandler('z', &print_IO_APIC_keyhandler);
+    register_keyhandler('z', _print_IO_APIC_keyhandler, "dump IOAPIC info", 1);
 }
 
 void ioapic_suspend(void)

@@ -89,6 +89,7 @@
 #define X86_CR4_OSXSAVE	0x40000 /* enable XSAVE/XRSTOR */
 #define X86_CR4_SMEP		0x100000/* enable SMEP */
 #define X86_CR4_SMAP		0x200000/* enable SMAP */
+#define X86_CR4_PKE        0x00400000 /* enable PKE */
 
 /*
  * Trap/fault mnemonics.
@@ -156,12 +157,21 @@ struct vcpu;
     pc;                                             \
 })
 
+struct x86_cpu_id {
+    uint16_t vendor;
+    uint16_t family;
+    uint16_t model;
+    uint16_t feature;   /* bit index */
+    const void *driver_data;
+};
+
 struct cpuinfo_x86 {
     __u8 x86;            /* CPU family */
     __u8 x86_vendor;     /* CPU vendor */
     __u8 x86_model;
     __u8 x86_mask;
     int  cpuid_level;    /* Maximum supported CPUID level, -1=no CPUID */
+    __u32 extended_cpuid_level; /* Maximum supported CPUID extended level */
     unsigned int x86_capability[NCAPINTS];
     char x86_vendor_id[16];
     char x86_model_id[64];
@@ -189,13 +199,21 @@ extern struct cpuinfo_x86 cpu_data[];
 
 extern void set_cpuid_faulting(bool_t enable);
 
+extern void (*ctxt_switch_levelling)(const struct vcpu *next);
+
 extern u64 host_pat;
 extern bool_t opt_cpu_info;
+extern u32 cpuid_ext_features;
+extern u64 trampoline_misc_enable_off;
 
 /* Maximum width of physical addresses supported by the hardware */
 extern unsigned int paddr_bits;
 /* Max physical address width supported within HAP guests */
 extern unsigned int hap_paddr_bits;
+/* Maximum width of virtual addresses supported by the hardware. */
+extern unsigned int vaddr_bits;
+
+extern const struct x86_cpu_id *x86_match_cpu(const struct x86_cpu_id table[]);
 
 extern void identify_cpu(struct cpuinfo_x86 *);
 extern void setup_clear_cpu_cap(unsigned int);
@@ -213,6 +231,8 @@ static always_inline void detect_ht(struct cpuinfo_x86 *c) {}
 
 #define cpu_to_core(_cpu)   (cpu_data[_cpu].cpu_core_id)
 #define cpu_to_socket(_cpu) (cpu_data[_cpu].phys_proc_id)
+
+unsigned int apicid_to_socket(unsigned int);
 
 /*
  * Generic CPUID function
@@ -563,6 +583,19 @@ void sysenter_eflags_saved(void);
 void compat_hypercall(void);
 void int80_direct_trap(void);
 
+#define STUBS_PER_PAGE (PAGE_SIZE / STUB_BUF_SIZE)
+
+struct stubs {
+    union {
+        void(*func)(void);
+        unsigned long addr;
+    };
+    unsigned long mfn;
+};
+
+DECLARE_PER_CPU(struct stubs, stubs);
+unsigned long alloc_stub_page(unsigned int cpu, unsigned long *mfn);
+
 extern int hypercall(void);
 
 int cpuid_hypervisor_leaves( uint32_t idx, uint32_t sub_idx,
@@ -572,7 +605,19 @@ int wrmsr_hypervisor_regs(uint32_t idx, uint64_t val);
 
 void microcode_set_module(unsigned int);
 int microcode_update(XEN_GUEST_HANDLE_PARAM(const_void), unsigned long len);
-int microcode_resume_cpu(int cpu);
+int microcode_resume_cpu(unsigned int cpu);
+int early_microcode_update_cpu(bool_t start_update);
+int early_microcode_init(void);
+int microcode_init_intel(void);
+int microcode_init_amd(void);
+
+enum get_cpu_vendor {
+   gcv_host_early,
+   gcv_host_late,
+   gcv_guest
+};
+
+int get_cpu_vendor(const char vendor_id[], enum get_cpu_vendor);
 
 void pv_cpuid(struct cpu_user_regs *regs);
 

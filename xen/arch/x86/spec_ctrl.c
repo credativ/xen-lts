@@ -16,6 +16,7 @@
  *
  * Copyright (c) 2017-2018 Citrix Systems Ltd.
  */
+#include <xen/config.h>
 #include <xen/errno.h>
 #include <xen/init.h>
 #include <xen/lib.h>

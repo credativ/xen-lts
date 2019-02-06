@@ -87,6 +87,18 @@ void __init set_nr_cpu_ids(unsigned int max_cpus)
 #endif
 }
 
+void __init set_nr_sockets(void)
+{
+	nr_sockets = last_physid(phys_cpu_present_map)
+		     / boot_cpu_data.x86_max_cores
+		     / boot_cpu_data.x86_num_siblings + 1;
+	if (disabled_cpus)
+		nr_sockets += (disabled_cpus - 1)
+			      / boot_cpu_data.x86_max_cores
+			      / boot_cpu_data.x86_num_siblings + 1;
+	printk(XENLOG_DEBUG "nr_sockets: %u\n", nr_sockets);
+}
+
 /*
  * Intel MP BIOS table parsing routines:
  */

@@ -157,6 +157,11 @@ struct hvm_hw_cpu {
     };
     /* error code for pending event */
     uint32_t error_code;
+  
+#define _XEN_X86_FPU_INITIALISED        0
+#define XEN_X86_FPU_INITIALISED         (1U<<_XEN_X86_FPU_INITIALISED)
+    uint32_t flags;
+    uint32_t pad0;
 };
 
 struct hvm_hw_cpu_compat {

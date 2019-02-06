@@ -450,19 +450,19 @@ void __init init_bsp_APIC(void)
 
     value = apic_read(APIC_LVR);
     ver = GET_APIC_VERSION(value);
-    
+
     /*
      * Do not trust the local APIC being empty at bootup.
      */
     clear_local_APIC();
-    
+
     /*
      * Enable APIC.
      */
     value = apic_read(APIC_SPIV);
     value &= ~APIC_VECTOR_MASK;
     value |= APIC_SPIV_APIC_ENABLED;
-    
+
     /* This bit is reserved on P4/Xeon and should be cleared */
     if ((boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) && (boot_cpu_data.x86 == 15))
         value &= ~APIC_SPIV_FOCUS_DISABLED;
@@ -692,9 +692,9 @@ void __devinit setup_local_APIC(void)
                         "vector: %#lx  after: %#lx\n",
                         oldvalue, value);
     } else {
-        if (esr_disable)    
-            /* 
-             * Something untraceble is creating bad interrupts on 
+        if (esr_disable)
+            /*
+             * Something untraceble is creating bad interrupts on
              * secondary quads ... for the moment, just leave the
              * ESR disabled - we can't do anything useful with the
              * errors anyway - mbligh
@@ -934,7 +934,7 @@ void __init x2apic_bsp_setup(void)
         {
             printk("Not enabling x2APIC: disabled by cmdline.\n");
             return;
-        }        
+        }
         printk("x2APIC: Already enabled by BIOS: Ignoring cmdline disable.\n");
     }
 
@@ -1071,7 +1071,7 @@ static unsigned int __init get_8254_timer_count(void)
 static void __init wait_8254_wraparound(void)
 {
     unsigned int curr_count, prev_count;
-    
+
     curr_count = get_8254_timer_count();
     do {
         prev_count = curr_count;
@@ -1080,7 +1080,7 @@ static void __init wait_8254_wraparound(void)
         /* workaround for broken Mercury/Neptune */
         if (prev_count >= curr_count + 0x100)
             curr_count = get_8254_timer_count();
-        
+
     } while (prev_count >= curr_count);
 }
 
@@ -1171,8 +1171,7 @@ static int __init calibrate_APIC_clock(void)
     /*
      * We wrapped around just now. Let's start:
      */
-    if (cpu_has_tsc)
-        rdtscll(t1);
+    t1 = rdtsc();
     tt1 = apic_read(APIC_TMCCT);
 
     /*
@@ -1182,8 +1181,7 @@ static int __init calibrate_APIC_clock(void)
         wait_8254_wraparound();
 
     tt2 = apic_read(APIC_TMCCT);
-    if (cpu_has_tsc)
-        rdtscll(t2);
+    t1 = rdtsc();
 
     /*
      * The APIC bus clock counter is 32 bits only, it
@@ -1195,14 +1193,12 @@ static int __init calibrate_APIC_clock(void)
 
     result = (tt1-tt2)*APIC_DIVISOR/LOOPS;
 
-    if (cpu_has_tsc)
-        apic_printk(APIC_VERBOSE, "..... CPU clock speed is "
-                    "%ld.%04ld MHz.\n",
-                    ((long)(t2-t1)/LOOPS)/(1000000/HZ),
-                    ((long)(t2-t1)/LOOPS)%(1000000/HZ));
 
-    apic_printk(APIC_VERBOSE, "..... host bus clock speed is "
-                "%ld.%04ld MHz.\n",
+    apic_printk(APIC_VERBOSE, "..... CPU clock speed is %ld.%04ld MHz.\n",
+		((long)(t2 - t1) / LOOPS) / ( 1000000 / HZ),
+		((long)(t2 - t1) / LOOPS) % ( 1000000 / HZ));
+
+    apic_printk(APIC_VERBOSE, "..... host bus clock speed is %ld.%04ld MHz.\n",
                 result/(1000000/HZ),
                 result%(1000000/HZ));
 
