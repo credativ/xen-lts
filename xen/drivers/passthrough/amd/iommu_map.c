@@ -693,11 +693,24 @@ int amd_iommu_map_page(struct domain *d, unsigned long gfn, unsigned long mfn,
                                        !!(flags & IOMMUF_writable),
                                        !!(flags & IOMMUF_readable));
 
-    /* Do not increase pde count if io mapping has not been changed */
-    if ( !need_flush )
-        goto out;
+    if ( need_flush )
+    {
+        amd_iommu_flush_pages(d, gfn, 0);
+        /* No further merging, as the logic doesn't cope. */
+        hd->no_merge = 1;
+    }
 
-    amd_iommu_flush_pages(d, gfn, 0);
+    /*
+     * Suppress merging of non-R/W mappings or after initial table creation,
+     * as the merge logic does not cope with this.
+     */
+    if ( hd->no_merge || flags != (IOMMUF_writable | IOMMUF_readable) )
+        goto out;
+    if ( d->creation_finished )
+    {
+        hd->no_merge = 1;
+        goto out;
+    }
 
     for ( merge_level = IOMMU_PAGING_MODE_LEVEL_2;
           merge_level <= hd->paging_mode; merge_level++ )
@@ -764,6 +777,10 @@ int amd_iommu_unmap_page(struct domain *d, unsigned long gfn)
 
     /* mark PTE as 'page not present' */
     clear_iommu_pte_present(pt_mfn[1], gfn);
+
+    /* No further merging in amd_iommu_map_page(), as the logic doesn't cope. */
+    hd->no_merge = 1;
+
     spin_unlock(&hd->mapping_lock);
 
     amd_iommu_flush_pages(d, gfn, 0);

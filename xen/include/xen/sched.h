@@ -338,6 +338,12 @@ struct domain
     struct domain   *target;
     /* Is this guest being debugged by dom0? */
     bool_t           debugger_attached;
+    /*
+     * Set to true at the very end of domain creation, when the domain is
+     * unpaused for the first time by the systemcontroller.
+     */
+    bool_t           creation_finished;
+
     /* Is this guest dying (i.e., a zombie)? */
     enum { DOMDYING_alive, DOMDYING_dying, DOMDYING_dead } is_dying;
     /* Domain is paused by controller software? */
