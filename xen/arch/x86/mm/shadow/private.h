@@ -280,8 +280,6 @@ static inline int sh_type_has_up_pointer(struct vcpu *v, unsigned int t)
 
 #endif /* (SHADOW_OPTIMIZATIONS & SHOPT_OUT_OF_SYNC) */
 
-#define SHF_pagetable_dying (1u<<31)
-
 static inline int sh_page_has_multiple_shadows(struct page_info *pg)
 {
     u32 shadows;
