@@ -275,8 +275,8 @@ static inline int sh_type_has_up_pointer(struct vcpu *v, unsigned int t)
  * codepath is called during that time and is sensitive to oos issues, it may 
  * need to use the second flag.
  */
-#define SHF_out_of_sync (1u<<30)
-#define SHF_oos_may_write (1u<<29)
+#define SHF_out_of_sync (1u << (SH_type_max_shadow + 1))
+#define SHF_oos_may_write (1u << (SH_type_max_shadow + 2))
 
 #endif /* (SHADOW_OPTIMIZATIONS & SHOPT_OUT_OF_SYNC) */
 

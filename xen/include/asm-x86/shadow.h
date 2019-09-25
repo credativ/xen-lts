@@ -115,6 +115,10 @@ static inline void shadow_remove_all_shadows(struct vcpu *v, mfn_t gmfn)
     sh_remove_shadows(v, gmfn, 0 /* Be thorough */, 1 /* Must succeed */);
 }
 
+/* Adjust shadows ready for a guest page to change its type. */
+void shadow_prepare_page_type_change(struct vcpu *v, struct page_info *page,
+                                     unsigned long new_type);
+
 /* Discard _all_ mappings from the domain's shadows. */
 void shadow_blow_tables_per_domain(struct domain *d);
 
